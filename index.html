@@ -3,294 +3,386 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Cyclora</title>
-    <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { font-family: system-ui, sans-serif; background: #f5f5f5; padding: 20px; }
-        .container { max-width: 600px; margin: 0 auto; }
-        .card { background: white; border-radius: 20px; padding: 20px; margin-bottom: 15px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); cursor: pointer; }
-        .btn { background: #1a1a1a; color: white; border: none; padding: 12px 20px; border-radius: 12px; font-weight: bold; width: 100%; cursor: pointer; }
-        .btn-secondary { background: #dc2626; }
-        .input { width: 100%; padding: 12px; border: 1px solid #ddd; border-radius: 12px; margin-bottom: 10px; font-size: 16px; }
-        .modal { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; padding: 20px; z-index: 1000; }
-        .modal-content { background: white; border-radius: 24px; padding: 20px; max-width: 500px; width: 100%; max-height: 80vh; overflow-y: auto; }
-        .tag { display: inline-block; padding: 4px 12px; border-radius: 20px; font-size: 12px; font-weight: bold; margin-right: 8px; margin-top: 8px; }
-        h1 { font-size: 24px; }
-        .sub { color: #666; font-size: 12px; margin-bottom: 20px; }
-        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
-        .tabs { display: flex; gap: 10px; margin-bottom: 20px; border-bottom: 1px solid #eee; }
-        .tab { padding: 10px 15px; cursor: pointer; border-bottom: 2px solid transparent; }
-        .tab.active { border-bottom-color: #1a1a1a; font-weight: bold; }
-    </style>
+    <title>Cyclora - Suivi du cycle menstruel</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script crossorigin src="https://unpkg.com/react@18.2.0/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18.2.0/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 </head>
 <body>
-    <div id="app"></div>
+    <div id="root"></div>
 
-    <script>
+    <script type="text/babel">
+        const { useState, useMemo, useEffect } = React;
+
+        // STORAGE KEY
         const STORAGE_KEY = "cyclora_profiles";
-        let profiles = [];
-        let showModal = false;
-        let editingProfile = null;
-        let currentTab = "basic";
 
-        function loadProfiles() {
-            const saved = localStorage.getItem(STORAGE_KEY);
-            if (saved) {
-                profiles = JSON.parse(saved);
-            } else {
-                profiles = [{
-                    id: Date.now(),
-                    firstName: "Sophie",
-                    lastName: "Martin",
-                    lastPeriod: new Date().toISOString().slice(0,10),
-                    cycleLength: 28,
-                    periodDuration: 5,
-                    priority: 1,
-                    notes: ""
-                }];
-                saveProfiles();
-            }
-            render();
+        // FACTEURS COMPLETS
+        const FACTORS = [
+            { id: "contraception_hormonal", label: "Contraception hormonale", sublabel: "Pilule, patch, anneau, implant, DIU hormonal", warning: "Supprime ou masque l'ovulation naturelle.", impact: "blocks_ovulation", confidencePenalty: 60, group: "contraception" },
+            { id: "contraception_copper", label: "DIU cuivre", sublabel: "Stérilet non hormonal", warning: null, impact: "period_longer", confidencePenalty: 0, group: "contraception" },
+            { id: "thyroid", label: "Trouble thyroïdien", sublabel: "Hypo ou hyperthyroïdie", warning: "Peut allonger ou raccourcir le cycle.", impact: "cycle_irregular", confidencePenalty: 20, group: "pathology" },
+            { id: "pcos", label: "SOPK", sublabel: "Syndrome des ovaires polykystiques", warning: "Cycles très irréguliers.", impact: "cycle_very_irregular", confidencePenalty: 35, group: "pathology" },
+            { id: "endo", label: "Endométriose", sublabel: "Diagnostic confirmé", warning: "Peut perturber la phase lutéale.", impact: "cycle_irregular", confidencePenalty: 10, group: "pathology" },
+            { id: "stress_high", label: "Stress élevé", sublabel: "Anxiété persistante", warning: "Le cortisol peut retarder l'ovulation.", impact: "ovulation_delayed", confidencePenalty: 15, group: "lifestyle" },
+            { id: "weight_loss", label: "Perte de poids importante", sublabel: "Régime restrictif", warning: "Peut arrêter l'ovulation.", impact: "ovulation_risk", confidencePenalty: 20, group: "lifestyle" },
+            { id: "sport_intense", label: "Sport intensif", sublabel: "Entraînement quotidien intense", warning: "Peut retarder l'ovulation.", impact: "ovulation_delayed", confidencePenalty: 15, group: "lifestyle" },
+            { id: "breastfeeding", label: "Allaitement", sublabel: "En cours", warning: "La prolactine inhibe l'ovulation.", impact: "ovulation_risk", confidencePenalty: 25, group: "lifecycle" },
+            { id: "postpartum", label: "Post-partum", sublabel: "< 6 mois", warning: "Cycles non régularisés.", impact: "cycle_very_irregular", confidencePenalty: 30, group: "lifecycle" },
+            { id: "perimenopause", label: "Péri-ménopause", sublabel: "> 40 ans", warning: "Cycles imprévisibles.", impact: "cycle_very_irregular", confidencePenalty: 30, group: "lifecycle" },
+            { id: "meds_antidepressant", label: "Antidépresseurs", sublabel: "ISRS, IRSN", warning: "Peuvent retarder l'ovulation.", impact: "ovulation_delayed", confidencePenalty: 10, group: "meds" },
+            { id: "meds_corticoids", label: "Corticoïdes", sublabel: "Prise orale prolongée", warning: "Peuvent perturber le cycle.", impact: "cycle_irregular", confidencePenalty: 10, group: "meds" },
+            { id: "meds_chemo", label: "Chimiothérapie", sublabel: "En cours ou récente", warning: "Peut induire une aménorrhée.", impact: "blocks_ovulation", confidencePenalty: 50, group: "meds" },
+        ];
+
+        const GROUP_LABELS = {
+            contraception: "💊 Contraception",
+            pathology: "🏥 Pathologies",
+            lifestyle: "🏃 Mode de vie",
+            lifecycle: "🤱 Étape de vie",
+            meds: "💉 Médicaments",
+        };
+
+        function stdDev(arr) {
+            if (arr.length < 2) return null;
+            const mean = arr.reduce((a, b) => a + b, 0) / arr.length;
+            return Math.sqrt(arr.map(x => (x - mean) ** 2).reduce((a, b) => a + b, 0) / arr.length);
         }
 
-        function saveProfiles() {
-            localStorage.setItem(STORAGE_KEY, JSON.stringify(profiles));
-        }
-
-        function deleteProfile(id) {
-            if (confirm("Supprimer ce profil ?")) {
-                profiles = profiles.filter(p => p.id !== id);
-                saveProfiles();
-                closeModal();
-                render();
-            }
-        }
-
-        function saveProfile(profile) {
-            if (!profile.firstName.trim()) {
-                alert("Le prénom est requis");
-                return false;
-            }
-            if (!profile.lastPeriod) {
-                alert("La date des dernières règles est requise");
-                return false;
-            }
+        function calcCycleInfo(profile) {
+            const today = new Date(); today.setHours(0, 0, 0, 0);
+            const start = new Date(profile.lastPeriod); start.setHours(0, 0, 0, 0);
+            const daysSince = Math.floor((today - start) / 86400000);
+            const activeFactors = FACTORS.filter(f => (profile.factors || []).includes(f.id));
+            const blocksOvulation = activeFactors.some(f => f.impact === "blocks_ovulation");
+            const allLengths = (profile.cycleHistory || []).map(h => h.length).filter(l => l >= 18 && l <= 60);
+            const avgCycle = allLengths.length >= 2 ? Math.round(allLengths.reduce((a, b) => a + b, 0) / allLengths.length) : (profile.cycleLength || 28);
+            const sd = allLengths.length >= 2 ? stdDev(allLengths) : null;
+            const lutealPhase = profile.lutealPhase || 14;
+            const ovulationDay = avgCycle - lutealPhase;
+            const fertileStart = ovulationDay - 5;
+            const periodDuration = profile.periodDuration || 5;
+            const dayOfCycle = (daysSince % avgCycle) + 1;
             
-            if (profile.id) {
-                profiles = profiles.map(p => p.id === profile.id ? profile : p);
-            } else {
-                profile.id = Date.now();
-                profiles.push(profile);
-            }
-            saveProfiles();
-            return true;
+            let statusCode;
+            if (blocksOvulation) statusCode = dayOfCycle <= periodDuration ? "period" : "follicular";
+            else if (dayOfCycle <= periodDuration) statusCode = "period";
+            else if (dayOfCycle < fertileStart) statusCode = "follicular";
+            else if (dayOfCycle >= fertileStart && dayOfCycle < ovulationDay) statusCode = "fertile";
+            else if (dayOfCycle === ovulationDay) statusCode = "ovulation";
+            else statusCode = "luteal";
+            
+            const daysToOvulation = blocksOvulation ? null : (dayOfCycle <= ovulationDay ? ovulationDay - dayOfCycle : (avgCycle - dayOfCycle) + ovulationDay);
+            const daysToNextPeriod = avgCycle - dayOfCycle + 1;
+            
+            let score = 40;
+            if (allLengths.length >= 3) score += 20;
+            if (allLengths.length >= 6) score += 10;
+            if (sd !== null && sd <= 2) score += 15;
+            if (profile.lutealPhase) score += 5;
+            activeFactors.forEach(f => { score -= f.confidencePenalty; });
+            score = Math.max(5, Math.min(90, score));
+            
+            let confidence, confidenceColor;
+            if (score >= 75) { confidence = "Élevée"; confidenceColor = "text-green-600"; }
+            else if (score >= 45) { confidence = "Modérée"; confidenceColor = "text-yellow-600"; }
+            else { confidence = "Faible"; confidenceColor = "text-red-500"; }
+            
+            const windowDays = sd ? Math.ceil(sd) : 2;
+            const warnings = activeFactors.filter(f => f.warning).map(f => f.warning);
+            
+            return { dayOfCycle, avgCycle, ovulationDay, fertileStart, periodDuration, statusCode, daysToOvulation, daysToNextPeriod, confidence, confidenceColor, score, windowDays, sd, blocksOvulation, warnings };
         }
 
-        function getCycleInfo(profile) {
-            const today = new Date();
-            today.setHours(0,0,0,0);
-            const lastPeriod = new Date(profile.lastPeriod);
-            lastPeriod.setHours(0,0,0,0);
-            const daysSince = Math.floor((today - lastPeriod) / (1000*60*60*24));
-            const cycleLength = profile.cycleLength || 28;
-            const dayOfCycle = (daysSince % cycleLength) + 1;
-            const daysToNextPeriod = cycleLength - dayOfCycle + 1;
-            
-            let phase = "";
-            let phaseColor = "";
-            if (dayOfCycle <= profile.periodDuration) {
-                phase = "🩸 Menstruation";
-                phaseColor = "#fecaca";
-            } else if (dayOfCycle <= 12) {
-                phase = "🌱 Phase folliculaire";
-                phaseColor = "#dbeafe";
-            } else if (dayOfCycle <= 16) {
-                phase = "🌸 Fenêtre fertile";
-                phaseColor = "#dcfce7";
-            } else if (dayOfCycle === 17) {
-                phase = "🥚 Ovulation";
-                phaseColor = "#fed7aa";
-            } else {
-                phase = "✨ Phase lutéale";
-                phaseColor = "#f3e8ff";
-            }
-            
-            return { dayOfCycle, cycleLength, daysToNextPeriod, phase, phaseColor };
+        function age(dob) {
+            if (!dob) return "—";
+            const today = new Date(), b = new Date(dob);
+            let a = today.getFullYear() - b.getFullYear();
+            if (today.getMonth() < b.getMonth() || (today.getMonth() === b.getMonth() && today.getDate() < b.getDate())) a--;
+            return a;
         }
 
-        function openModal(profile = null) {
-            if (profile) {
-                editingProfile = JSON.parse(JSON.stringify(profile));
-            } else {
-                editingProfile = {
-                    id: null,
-                    firstName: "",
-                    lastName: "",
-                    lastPeriod: new Date().toISOString().slice(0,10),
-                    cycleLength: 28,
-                    periodDuration: 5,
-                    priority: 1,
-                    notes: ""
-                };
-            }
-            currentTab = "basic";
-            showModal = true;
-            renderModal();
+        function fmtDate(str) {
+            if (!str || str === "inconnu") return "—";
+            return new Date(str).toLocaleDateString("fr-FR", { day: "numeric", month: "short", year: "numeric" });
         }
 
-        function closeModal() {
-            showModal = false;
-            editingProfile = null;
-            render();
-        }
+        const STATUS_META = {
+            period: { label: "Menstruation", bg: "bg-red-100", text: "text-red-700", dot: "bg-red-500", border: "border-red-300" },
+            follicular: { label: "Phase folliculaire", bg: "bg-blue-100", text: "text-blue-700", dot: "bg-blue-500", border: "border-blue-300" },
+            fertile: { label: "Fenêtre fertile", bg: "bg-green-100", text: "text-green-700", dot: "bg-green-500", border: "border-green-300" },
+            ovulation: { label: "Ovulation", bg: "bg-orange-100", text: "text-orange-700", dot: "bg-orange-500", border: "border-orange-300" },
+            luteal: { label: "Phase lutéale", bg: "bg-purple-100", text: "text-purple-700", dot: "bg-purple-500", border: "border-purple-300" },
+        };
 
-        function updateFormField(field, value) {
-            if (editingProfile) {
-                editingProfile[field] = value;
-                renderModal();
-            }
-        }
+        const PRIORITY_META = {
+            1: { label: "Priorité 1", sublabel: "Cible active", icon: "🔴", bg: "bg-red-50", border: "border-red-400", text: "text-red-700" },
+            2: { label: "Priorité 2", sublabel: "Suivi régulier", icon: "🟠", bg: "bg-orange-50", border: "border-orange-400", text: "text-orange-700" },
+            3: { label: "Priorité 3", sublabel: "Suivi occasionnel", icon: "🟡", bg: "bg-yellow-50", border: "border-yellow-400", text: "text-yellow-700" },
+            4: { label: "Priorité 4", sublabel: "Profil accompli ✅", icon: "✅", bg: "bg-gray-50", border: "border-gray-300", text: "text-gray-400" },
+        };
 
-        function renderModal() {
-            const modalDiv = document.getElementById("modal-container");
-            if (!modalDiv) return;
-            
-            if (!showModal || !editingProfile) {
-                modalDiv.innerHTML = "";
-                return;
-            }
-            
-            const p = editingProfile;
-            const info = getCycleInfo(p);
-            
-            modalDiv.innerHTML = `
-                <div class="modal" onclick="closeModal()">
-                    <div class="modal-content" onclick="event.stopPropagation()">
-                        <div style="display: flex; justify-content: space-between; margin-bottom: 20px;">
-                            <h3>${p.id ? "✏️ Modifier" : "➕ Nouveau"} profil</h3>
-                            <button onclick="closeModal()" style="background: none; border: none; font-size: 24px; cursor: pointer;">×</button>
-                        </div>
-                        
-                        <div class="tabs">
-                            <div class="tab ${currentTab === 'basic' ? 'active' : ''}" onclick="currentTab='basic'; renderModal()">👤 Identité</div>
-                            <div class="tab ${currentTab === 'cycle' ? 'active' : ''}" onclick="currentTab='cycle'; renderModal()">📅 Cycle</div>
-                        </div>
-                        
-                        ${currentTab === 'basic' ? `
-                            <input class="input" placeholder="Prénom *" value="${escapeHtml(p.firstName)}" onchange="updateFormField('firstName', this.value)">
-                            <input class="input" placeholder="Nom" value="${escapeHtml(p.lastName)}" onchange="updateFormField('lastName', this.value)">
-                            <textarea class="input" rows="3" placeholder="Notes (symptômes, remarques...)" onchange="updateFormField('notes', this.value)">${escapeHtml(p.notes)}</textarea>
-                            <div style="margin-top: 10px;">
-                                <label style="font-size: 12px; color: #666;">Niveau de priorité</label>
-                                <div style="display: flex; gap: 10px; margin-top: 5px;">
-                                    <button onclick="updateFormField('priority', 1)" style="padding: 8px 12px; border-radius: 10px; border: 1px solid #ddd; background: ${p.priority === 1 ? '#fee2e2' : 'white'}">🔴 Priorité 1</button>
-                                    <button onclick="updateFormField('priority', 2)" style="padding: 8px 12px; border-radius: 10px; border: 1px solid #ddd; background: ${p.priority === 2 ? '#ffedd5' : 'white'}">🟠 Priorité 2</button>
-                                    <button onclick="updateFormField('priority', 3)" style="padding: 8px 12px; border-radius: 10px; border: 1px solid #ddd; background: ${p.priority === 3 ? '#fef9c3' : 'white'}">🟡 Priorité 3</button>
-                                </div>
-                            </div>
-                        ` : `
-                            <label style="font-size: 12px; color: #666;">📅 Date des dernières règles *</label>
-                            <input type="date" class="input" value="${p.lastPeriod}" onchange="updateFormField('lastPeriod', this.value)">
-                            
-                            <label style="font-size: 12px; color: #666;">⏱️ Durée du cycle: <strong>${p.cycleLength} jours</strong></label>
-                            <input type="range" min="18" max="60" value="${p.cycleLength}" onchange="updateFormField('cycleLength', parseInt(this.value))" style="width: 100%; margin-bottom: 15px;">
-                            
-                            <label style="font-size: 12px; color: #666;">🩸 Durée des règles: <strong>${p.periodDuration} jours</strong></label>
-                            <input type="range" min="1" max="10" value="${p.periodDuration}" onchange="updateFormField('periodDuration', parseInt(this.value))" style="width: 100%; margin-bottom: 15px;">
-                            
-                            <div style="margin-top: 15px; padding: 12px; background: ${info.phaseColor}; border-radius: 12px;">
-                                <div style="font-size: 14px;"><strong>📊 Aperçu du cycle</strong></div>
-                                <div style="font-size: 12px; margin-top: 5px;">${info.phase}</div>
-                                <div style="font-size: 24px; font-weight: bold; margin-top: 5px;">Jour ${info.dayOfCycle} / ${info.cycleLength}</div>
-                                <div style="font-size: 12px;">Prochaines règles dans ${info.daysToNextPeriod} jour${info.daysToNextPeriod > 1 ? 's' : ''}</div>
-                            </div>
-                        `}
-                        
-                        <div style="display: flex; gap: 10px; margin-top: 20px;">
-                            <button class="btn" onclick="if(saveProfile(editingProfile)) { closeModal(); render(); }">${p.id ? "💾 Enregistrer" : "✅ Créer"}</button>
-                            ${p.id ? `<button class="btn btn-secondary" onclick="deleteProfile(${p.id})">🗑️ Supprimer</button>` : ""}
-                        </div>
+        const EMPTY_FORM = { firstName: "", lastName: "", dob: "", lastPeriod: "", cycleLength: 28, periodDuration: 5, lutealPhase: 14, priority: 1, notes: "", factors: [], cycleHistory: [] };
+
+        // Composant CycleRing
+        function CycleRing({ info }) {
+            const { dayOfCycle, avgCycle, statusCode } = info;
+            const R = 36, CX = 44, CY = 44, sw = 7, circ = 2 * Math.PI * R;
+            const prog = (dayOfCycle / avgCycle) * circ;
+            const col = { period: "#ef4444", follicular: "#3b82f6", fertile: "#22c55e", ovulation: "#f97316", luteal: "#a855f7" }[statusCode];
+            return (
+                <div className="relative flex items-center justify-center flex-shrink-0" style={{ width: 88, height: 88 }}>
+                    <svg width="88" height="88" style={{ transform: "rotate(-90deg)" }}>
+                        <circle cx={CX} cy={CY} r={R} fill="none" stroke="#f3f4f6" strokeWidth={sw} />
+                        <circle cx={CX} cy={CY} r={R} fill="none" stroke={col} strokeWidth={sw} strokeDasharray={`${prog} ${circ}`} strokeLinecap="round" />
+                    </svg>
+                    <div className="absolute text-center">
+                        <div className="text-lg font-black text-gray-900 leading-none">{dayOfCycle}</div>
+                        <div className="text-[10px] text-gray-400">/{avgCycle}j</div>
                     </div>
                 </div>
-            `;
+            );
         }
 
-        function escapeHtml(str) {
-            if (!str) return "";
-            return str.replace(/[&<>]/g, function(m) {
-                if (m === '&') return '&amp;';
-                if (m === '<') return '&lt;';
-                if (m === '>') return '&gt;';
-                return m;
-            });
-        }
-
-        function render() {
-            const app = document.getElementById("app");
-            if (!app) return;
-            
-            const activeProfiles = profiles.filter(p => p.priority !== 4);
-            
-            app.innerHTML = `
-                <div class="container">
-                    <div class="header">
-                        <div>
-                            <h1>🌸 Cyclora</h1>
-                            <div class="sub">Suivi du cycle menstruel • Données sauvegardées localement</div>
+        // Composant ProfileCard
+        function ProfileCard({ profile, onClick }) {
+            const info = calcCycleInfo(profile);
+            const sm = STATUS_META[info.statusCode];
+            const pm = PRIORITY_META[profile.priority || 1];
+            const accomplished = profile.priority === 4;
+            const hasWarnings = info.warnings.length > 0;
+            return (
+                <div onClick={() => onClick(profile)} className={`cursor-pointer rounded-2xl border-2 bg-white shadow-sm hover:shadow-md transition-all p-4 flex gap-3 items-start ${accomplished ? "opacity-55 border-gray-200" : hasWarnings ? "border-orange-300" : sm.border}`}>
+                    <CycleRing info={info} />
+                    <div className="flex-1 min-w-0">
+                        <div className="flex items-start justify-between gap-2 flex-wrap">
+                            <div className="flex items-center gap-1.5">
+                                <span>{pm.icon}</span>
+                                <span className="font-bold text-gray-900 text-sm">{profile.firstName} {profile.lastName}</span>
+                                {profile.dob && <span className="text-xs text-gray-400">{age(profile.dob)} ans</span>}
+                            </div>
+                            <div className={`inline-flex items-center gap-1 rounded-full font-semibold text-xs px-2 py-0.5 ${sm.bg} ${sm.text}`}>
+                                <span className={`w-1.5 h-1.5 rounded-full ${sm.dot}`} />{sm.label}
+                            </div>
                         </div>
-                        <button class="btn" style="width: auto; margin: 0; padding: 10px 20px;" onclick="openModal()">+ Nouveau</button>
+                        {!accomplished && (
+                            <div className="mt-2 flex flex-wrap gap-1.5">
+                                {info.blocksOvulation ? (
+                                    <span className="rounded-lg px-2 py-1 bg-orange-100 text-orange-700 text-xs font-semibold">⚠️ Ovulation non calculable</span>
+                                ) : (
+                                    <span className={`rounded-lg px-2 py-1 text-xs font-semibold ${sm.bg} ${sm.text}`}>
+                                        Ovulation dans <strong>{info.daysToOvulation}j</strong>
+                                        {info.windowDays > 0 && <span className="font-normal opacity-70"> ±{info.windowDays}j</span>}
+                                    </span>
+                                )}
+                                <span className="rounded-lg px-2 py-1 bg-gray-100 text-gray-600 text-xs font-semibold">
+                                    Règles dans <strong>{info.daysToNextPeriod}j</strong>
+                                </span>
+                                <span className={`rounded-lg px-2 py-1 bg-gray-50 text-xs font-semibold ${info.confidenceColor}`}>
+                                    ⬤ {info.confidence} ({info.score}%)
+                                </span>
+                            </div>
+                        )}
+                        {profile.notes && <div className="mt-1 text-xs text-gray-400 truncate">{profile.notes}</div>}
                     </div>
-                    
-                    ${profiles.length === 0 ? `
-                        <div style="text-align: center; padding: 60px 20px;">
-                            <div style="font-size: 48px; margin-bottom: 16px;">🌸</div>
-                            <div style="font-weight: bold; margin-bottom: 8px;">Aucun profil</div>
-                            <div style="color: #666; margin-bottom: 20px;">Créez votre premier profil pour commencer</div>
-                            <button class="btn" onclick="openModal()">Créer un profil</button>
+                </div>
+            );
+        }
+
+        // Composant principal App
+        function App() {
+            const [profiles, setProfiles] = useState([]);
+            const [search, setSearch] = useState("");
+            const [filterPriority, setFilterPriority] = useState("all");
+            const [editing, setEditing] = useState(null);
+            const [adding, setAdding] = useState(false);
+
+            useEffect(() => {
+                const saved = localStorage.getItem(STORAGE_KEY);
+                if (saved) {
+                    try {
+                        setProfiles(JSON.parse(saved));
+                    } catch (e) { console.error(e); }
+                } else {
+                    // Démo
+                    setProfiles([{
+                        id: Date.now(),
+                        firstName: "Sophie",
+                        lastName: "Martin",
+                        lastPeriod: new Date().toISOString().slice(0, 10),
+                        cycleLength: 28,
+                        periodDuration: 5,
+                        lutealPhase: 14,
+                        priority: 1,
+                        notes: "",
+                        factors: [],
+                        cycleHistory: []
+                    }]);
+                }
+            }, []);
+
+            useEffect(() => {
+                if (profiles.length > 0) localStorage.setItem(STORAGE_KEY, JSON.stringify(profiles));
+            }, [profiles]);
+
+            const handleSave = (form) => {
+                setProfiles(ps => form.id ? ps.map(p => p.id === form.id ? form : p) : [...ps, { ...form, id: Date.now() }]);
+                setEditing(null);
+                setAdding(false);
+            };
+
+            const handleDelete = (id) => {
+                setProfiles(ps => ps.filter(p => p.id !== id));
+                setEditing(null);
+            };
+
+            const sorted = useMemo(() => {
+                return profiles.filter(p => {
+                    const name = `${p.firstName} ${p.lastName}`.toLowerCase();
+                    return name.includes(search.toLowerCase()) && (filterPriority === "all" || String(p.priority) === filterPriority);
+                });
+            }, [profiles, search, filterPriority]);
+
+            return (
+                <div className="min-h-screen bg-gray-50">
+                    <header className="bg-white border-b sticky top-0 z-40 shadow-sm">
+                        <div className="max-w-2xl mx-auto px-4 py-3 flex items-center justify-between">
+                            <div>
+                                <div className="font-black text-gray-900 text-xl">🌸 Cyclora</div>
+                                <div className="text-xs text-gray-400">Suivi précis du cycle menstruel</div>
+                            </div>
+                            <button onClick={() => setAdding(true)} className="bg-gray-900 text-white text-sm font-bold px-4 py-2 rounded-xl">+ Nouveau profil</button>
                         </div>
-                    ` : `
-                        ${activeProfiles.map(p => {
-                            const info = getCycleInfo(p);
-                            const priorityIcon = p.priority === 1 ? "🔴" : p.priority === 2 ? "🟠" : "🟡";
-                            return `
-                                <div class="card" onclick='openModal(${JSON.stringify(p)})'>
-                                    <div style="display: flex; justify-content: space-between; align-items: flex-start;">
-                                        <div style="flex: 1;">
-                                            <div style="display: flex; align-items: center; gap: 8px;">
-                                                <span style="font-size: 20px;">${priorityIcon}</span>
-                                                <strong style="font-size: 16px;">${escapeHtml(p.firstName)} ${escapeHtml(p.lastName)}</strong>
-                                            </div>
-                                            <div style="margin-top: 8px;">
-                                                <span class="tag" style="background: ${info.phaseColor}">${info.phase}</span>
-                                                <span class="tag" style="background: #e5e7eb;">📅 J${info.dayOfCycle}/${info.cycleLength}</span>
-                                            </div>
-                                            <div style="margin-top: 8px;">
-                                                <span class="tag" style="background: #e0e7ff;">⏰ Règles dans ${info.daysToNextPeriod}j</span>
-                                            </div>
-                                            ${p.notes ? `<div style="font-size: 11px; color: #999; margin-top: 8px;">📝 ${escapeHtml(p.notes.substring(0, 60))}${p.notes.length > 60 ? '...' : ''}</div>` : ''}
-                                        </div>
-                                        <div style="text-align: right;">
-                                            <div style="font-size: 28px; font-weight: bold;">J${info.dayOfCycle}</div>
+                    </header>
+
+                    <main className="max-w-2xl mx-auto px-4 py-5">
+                        {profiles.length === 0 ? (
+                            <div className="text-center py-20">
+                                <div className="text-5xl mb-4">🌸</div>
+                                <div className="font-bold text-gray-800 mb-2">Aucun profil créé</div>
+                                <button onClick={() => setAdding(true)} className="bg-gray-900 text-white font-bold px-6 py-3 rounded-xl">Créer un profil</button>
+                            </div>
+                        ) : (
+                            <>
+                                <div className="flex gap-2 mb-4 flex-wrap">
+                                    <input className="flex-1 border border-gray-200 rounded-xl px-3 py-2 text-sm" placeholder="🔍 Rechercher..." value={search} onChange={e => setSearch(e.target.value)} />
+                                    <select className="border border-gray-200 rounded-xl px-2 py-2 text-sm" value={filterPriority} onChange={e => setFilterPriority(e.target.value)}>
+                                        <option value="all">Toutes priorités</option>
+                                        <option value="1">🔴 Priorité 1</option>
+                                        <option value="2">🟠 Priorité 2</option>
+                                        <option value="3">🟡 Priorité 3</option>
+                                        <option value="4">✅ Accompli</option>
+                                    </select>
+                                </div>
+                                <div className="space-y-3">
+                                    {sorted.map(p => <ProfileCard key={p.id} profile={p} onClick={setEditing} />)}
+                                </div>
+                            </>
+                        )}
+                    </main>
+
+                    {adding && <ProfileForm onSave={handleSave} onCancel={() => setAdding(false)} />}
+                    {editing && <ProfileForm initial={editing} onSave={handleSave} onCancel={() => setEditing(null)} onDelete={handleDelete} />}
+                </div>
+            );
+        }
+
+        // Formulaire ProfileForm (simplifié mais avec toutes les fonctionnalités)
+        function ProfileForm({ initial = EMPTY_FORM, onSave, onCancel, onDelete }) {
+            const [form, setForm] = useState({ ...EMPTY_FORM, ...initial });
+            const [tab, setTab] = useState("basic");
+            
+            const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
+            const toggleFactor = (id) => setForm(f => ({ ...f, factors: f.factors?.includes(id) ? f.factors.filter(x => x !== id) : [...(f.factors || []), id] }));
+            
+            const valid = form.firstName.trim() && form.lastPeriod;
+            const inputCls = "w-full border border-gray-200 rounded-xl px-3 py-2 text-sm";
+            const labelCls = "text-xs font-semibold text-gray-500 block mb-1";
+            const previewInfo = useMemo(() => calcCycleInfo({ ...form, lastPeriod: form.lastPeriod || new Date().toISOString().slice(0, 10) }), [form]);
+            const groupedFactors = Object.entries(GROUP_LABELS).map(([g, gl]) => ({ group: g, label: gl, items: FACTORS.filter(f => f.group === g) }));
+            
+            return (
+                <div className="fixed inset-0 bg-black/60 flex items-end sm:items-center justify-center z-50 p-0 sm:p-4" onClick={onCancel}>
+                    <div className="bg-white rounded-t-3xl sm:rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] flex flex-col" onClick={e => e.stopPropagation()}>
+                        <div className="flex justify-between px-5 pt-5 pb-3 border-b">
+                            <div className="font-black">{initial.id ? "Modifier" : "Nouveau"} profil</div>
+                            <button onClick={onCancel} className="text-gray-400 text-2xl">×</button>
+                        </div>
+                        
+                        <div className="flex border-b px-5">
+                            {[["basic", "👤 Identité"], ["cycle", "📅 Cycle"], ["factors", "⚠️ Facteurs"]].map(([t, l]) => (
+                                <button key={t} onClick={() => setTab(t)} className={`text-xs py-2 px-2 mr-2 ${tab === t ? "border-b-2 border-gray-900 font-bold" : "text-gray-400"}`}>{l}</button>
+                            ))}
+                        </div>
+                        
+                        <div className="overflow-y-auto flex-1 px-5 py-4 space-y-4">
+                            {tab === "basic" && (
+                                <>
+                                    <div className="grid grid-cols-2 gap-3">
+                                        <label><span className={labelCls}>Prénom *</span><input className={inputCls} value={form.firstName} onChange={e => set("firstName", e.target.value)} /></label>
+                                        <label><span className={labelCls}>Nom</span><input className={inputCls} value={form.lastName} onChange={e => set("lastName", e.target.value)} /></label>
+                                    </div>
+                                    <label><span className={labelCls}>Date de naissance</span><input type="date" className={inputCls} value={form.dob} onChange={e => set("dob", e.target.value)} /></label>
+                                    <div>
+                                        <span className={labelCls}>Priorité</span>
+                                        <div className="grid grid-cols-4 gap-2">
+                                            {[1, 2, 3, 4].map(p => (
+                                                <button key={p} onClick={() => set("priority", p)} className={`text-center rounded-xl border-2 px-2 py-2 text-sm ${form.priority === p ? "bg-gray-900 text-white" : "border-gray-200"}`}>
+                                                    {PRIORITY_META[p].icon}
+                                                </button>
+                                            ))}
                                         </div>
                                     </div>
-                                </div>
-                            `;
-                        }).join('')}
-                    `}
-                    
-                    <div style="margin-top: 20px; text-align: center; font-size: 11px; color: #999;">
-                        💾 Vos données sont sauvegardées automatiquement dans ce navigateur
+                                    <label><span className={labelCls}>Notes</span><textarea className={inputCls} rows={2} value={form.notes} onChange={e => set("notes", e.target.value)} /></label>
+                                </>
+                            )}
+                            {tab === "cycle" && (
+                                <>
+                                    <label><span className={labelCls}>Dernières règles *</span><input type="date" className={inputCls} value={form.lastPeriod} onChange={e => set("lastPeriod", e.target.value)} /></label>
+                                    <label><span className={labelCls}>Cycle: {form.cycleLength}j</span><input type="range" min={18} max={60} value={form.cycleLength} onChange={e => set("cycleLength", Number(e.target.value))} className="w-full" /></label>
+                                    <label><span className={labelCls}>Règles: {form.periodDuration}j</span><input type="range" min={1} max={10} value={form.periodDuration} onChange={e => set("periodDuration", Number(e.target.value))} className="w-full" /></label>
+                                    <label><span className={labelCls}>Phase lutéale: {form.lutealPhase}j</span><input type="range" min={10} max={18} value={form.lutealPhase} onChange={e => set("lutealPhase", Number(e.target.value))} className="w-full" /></label>
+                                </>
+                            )}
+                            {tab === "factors" && (
+                                <>
+                                    <div className="text-xs text-blue-700 bg-blue-50 rounded-xl p-2">Facteurs influençant le cycle :</div>
+                                    {groupedFactors.map(({ group, label, items }) => (
+                                        <div key={group}>
+                                            <div className="text-xs font-bold text-gray-400 mb-1">{label}</div>
+                                            {items.map(f => {
+                                                const active = (form.factors || []).includes(f.id);
+                                                return (
+                                                    <div key={f.id} onClick={() => toggleFactor(f.id)} className={`cursor-pointer rounded-xl border-2 p-2 mb-1 ${active ? "border-orange-400 bg-orange-50" : "border-gray-100"}`}>
+                                                        <div className="font-semibold text-sm">{f.label}</div>
+                                                        <div className="text-xs text-gray-500">{f.sublabel}</div>
+                                                        {active && f.warning && <div className="text-xs text-orange-600">⚠️ {f.warning}</div>}
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                    ))}
+                                    <div className="bg-gray-50 rounded-xl p-3 mt-2">
+                                        <div className="text-xs">Confiance: {previewInfo.score}% - {previewInfo.confidence}</div>
+                                        <div className="h-1.5 bg-gray-200 rounded-full mt-1"><div className={`h-full rounded-full ${previewInfo.score >= 75 ? "bg-green-500" : previewInfo.score >= 45 ? "bg-yellow-500" : "bg-red-500"}`} style={{ width: `${previewInfo.score}%` }} /></div>
+                                    </div>
+                                </>
+                            )}
+                        </div>
+                        
+                        <div className="px-5 py-4 border-t flex gap-2">
+                            <button onClick={() => valid && onSave(form)} disabled={!valid} className={`flex-1 py-3 rounded-xl font-bold ${valid ? "bg-gray-900 text-white" : "bg-gray-100 text-gray-400"}`}>
+                                {initial.id ? "Enregistrer" : "Créer"}
+                            </button>
+                            {initial.id && <button onClick={() => onDelete(initial.id)} className="px-4 py-3 border-2 border-red-200 text-red-500 rounded-xl">Supprimer</button>}
+                        </div>
                     </div>
-                    
-                    <div id="modal-container"></div>
                 </div>
-            `;
-            
-            if (showModal) renderModal();
+            );
         }
 
-        // Démarrage
-        loadProfiles();
+        ReactDOM.createRoot(document.getElementById("root")).render(<App />);
     </script>
 </body>
 </html>
