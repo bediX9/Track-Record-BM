@@ -1,388 +1,925 @@
 <!DOCTYPE html>
 <html lang="fr">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Cyclora - Suivi du cycle menstruel</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script crossorigin src="https://unpkg.com/react@18.2.0/umd/react.development.js"></script>
-    <script crossorigin src="https://unpkg.com/react-dom@18.2.0/umd/react-dom.development.js"></script>
-    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Cyclora — Suivi du cycle menstruel</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.development.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.development.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+    input[type=range] { cursor: pointer; }
+    ::-webkit-scrollbar { width: 4px; } ::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 4px; }
+  </style>
 </head>
 <body>
-    <div id="root"></div>
+  <div id="root"></div>
 
-    <script type="text/babel">
-        const { useState, useMemo, useEffect } = React;
+<script type="text/babel">
+// ─── No imports — use React globals provided by UMD build ───────────────────
+const { useState, useMemo, useEffect } = React;
 
-        // STORAGE KEY
-        const STORAGE_KEY = "cyclora_profiles";
+// ─── CONSTANTS ───────────────────────────────────────────────────────────────
+const FACTORS = [
+  {
+    id: "contraception_hormonal",
+    label: "Contraception hormonale",
+    sublabel: "Pilule, patch, anneau, implant, DIU hormonal",
+    warning: "Supprime ou masque l'ovulation naturelle. Les prédictions ne sont pas fiables.",
+    impact: "blocks_ovulation",
+    confidencePenalty: 60,
+    group: "contraception",
+  },
+  {
+    id: "contraception_copper",
+    label: "DIU cuivre (stérilet non hormonal)",
+    sublabel: "N'affecte pas l'ovulation mais peut allonger les règles",
+    warning: null,
+    impact: "period_longer",
+    confidencePenalty: 0,
+    group: "contraception",
+  },
+  {
+    id: "thyroid",
+    label: "Trouble thyroïdien",
+    sublabel: "Hypo ou hyperthyroïdie (diagnostiquée ou suspectée)",
+    warning: "Peut allonger ou raccourcir le cycle de façon imprévisible.",
+    impact: "cycle_irregular",
+    confidencePenalty: 20,
+    group: "pathology",
+  },
+  {
+    id: "pcos",
+    label: "SOPK (syndrome ovaires polykystiques)",
+    sublabel: "Diagnostic médical confirmé",
+    warning: "Cycles très irréguliers, ovulation souvent absente ou retardée. Prédictions peu fiables.",
+    impact: "cycle_very_irregular",
+    confidencePenalty: 35,
+    group: "pathology",
+  },
+  {
+    id: "endo",
+    label: "Endométriose",
+    sublabel: "Diagnostic médical confirmé",
+    warning: "Peut perturber la durée des règles et la phase lutéale.",
+    impact: "cycle_irregular",
+    confidencePenalty: 10,
+    group: "pathology",
+  },
+  {
+    id: "stress_high",
+    label: "Stress élevé ou chronique",
+    sublabel: "Travail, événements de vie, anxiété persistante",
+    warning: "Le cortisol peut retarder ou supprimer l'ovulation.",
+    impact: "ovulation_delayed",
+    confidencePenalty: 15,
+    group: "lifestyle",
+  },
+  {
+    id: "weight_loss",
+    label: "Perte de poids importante récente",
+    sublabel: "Régime restrictif, chirurgie bariatrique, perte rapide",
+    warning: "En dessous d'un certain IMC, l'ovulation peut s'arrêter (aménorrhée).",
+    impact: "ovulation_risk",
+    confidencePenalty: 20,
+    group: "lifestyle",
+  },
+  {
+    id: "sport_intense",
+    label: "Sport intensif",
+    sublabel: "Entraînement quotidien intense, compétition de haut niveau",
+    warning: "Peut retarder ou supprimer l'ovulation (triade de l'athlète).",
+    impact: "ovulation_delayed",
+    confidencePenalty: 15,
+    group: "lifestyle",
+  },
+  {
+    id: "breastfeeding",
+    label: "Allaitement en cours",
+    sublabel: "Partiel ou exclusif",
+    warning: "La prolactine inhibe l'ovulation, surtout en allaitement exclusif.",
+    impact: "ovulation_risk",
+    confidencePenalty: 25,
+    group: "lifecycle",
+  },
+  {
+    id: "postpartum",
+    label: "Post-partum (< 6 mois)",
+    sublabel: "Accouchement récent, cycles non encore régularisés",
+    warning: "Les cycles mettent 1 à 6 mois à se régulariser après l'accouchement.",
+    impact: "cycle_very_irregular",
+    confidencePenalty: 30,
+    group: "lifecycle",
+  },
+  {
+    id: "perimenopause",
+    label: "Péri-ménopause",
+    sublabel: "Cycles irréguliers, bouffées de chaleur, > 40 ans",
+    warning: "Les cycles deviennent imprévisibles. Les prédictions ont une marge d'erreur élevée.",
+    impact: "cycle_very_irregular",
+    confidencePenalty: 30,
+    group: "lifecycle",
+  },
+  {
+    id: "meds_antidepressant",
+    label: "Antidépresseurs / antipsychotiques",
+    sublabel: "ISRS, IRSN, neuroleptiques",
+    warning: "Certains augmentent la prolactine et peuvent retarder l'ovulation.",
+    impact: "ovulation_delayed",
+    confidencePenalty: 10,
+    group: "meds",
+  },
+  {
+    id: "meds_corticoids",
+    label: "Corticoïdes",
+    sublabel: "Prise orale prolongée (> 2 semaines)",
+    warning: "Peuvent perturber l'axe hormonal et le cycle.",
+    impact: "cycle_irregular",
+    confidencePenalty: 10,
+    group: "meds",
+  },
+  {
+    id: "meds_chemo",
+    label: "Chimiothérapie / radiothérapie",
+    sublabel: "En cours ou récente (< 1 an)",
+    warning: "Peut induire une aménorrhée temporaire ou définitive.",
+    impact: "blocks_ovulation",
+    confidencePenalty: 50,
+    group: "meds",
+  },
+];
 
-        // FACTEURS COMPLETS
-        const FACTORS = [
-            { id: "contraception_hormonal", label: "Contraception hormonale", sublabel: "Pilule, patch, anneau, implant, DIU hormonal", warning: "Supprime ou masque l'ovulation naturelle.", impact: "blocks_ovulation", confidencePenalty: 60, group: "contraception" },
-            { id: "contraception_copper", label: "DIU cuivre", sublabel: "Stérilet non hormonal", warning: null, impact: "period_longer", confidencePenalty: 0, group: "contraception" },
-            { id: "thyroid", label: "Trouble thyroïdien", sublabel: "Hypo ou hyperthyroïdie", warning: "Peut allonger ou raccourcir le cycle.", impact: "cycle_irregular", confidencePenalty: 20, group: "pathology" },
-            { id: "pcos", label: "SOPK", sublabel: "Syndrome des ovaires polykystiques", warning: "Cycles très irréguliers.", impact: "cycle_very_irregular", confidencePenalty: 35, group: "pathology" },
-            { id: "endo", label: "Endométriose", sublabel: "Diagnostic confirmé", warning: "Peut perturber la phase lutéale.", impact: "cycle_irregular", confidencePenalty: 10, group: "pathology" },
-            { id: "stress_high", label: "Stress élevé", sublabel: "Anxiété persistante", warning: "Le cortisol peut retarder l'ovulation.", impact: "ovulation_delayed", confidencePenalty: 15, group: "lifestyle" },
-            { id: "weight_loss", label: "Perte de poids importante", sublabel: "Régime restrictif", warning: "Peut arrêter l'ovulation.", impact: "ovulation_risk", confidencePenalty: 20, group: "lifestyle" },
-            { id: "sport_intense", label: "Sport intensif", sublabel: "Entraînement quotidien intense", warning: "Peut retarder l'ovulation.", impact: "ovulation_delayed", confidencePenalty: 15, group: "lifestyle" },
-            { id: "breastfeeding", label: "Allaitement", sublabel: "En cours", warning: "La prolactine inhibe l'ovulation.", impact: "ovulation_risk", confidencePenalty: 25, group: "lifecycle" },
-            { id: "postpartum", label: "Post-partum", sublabel: "< 6 mois", warning: "Cycles non régularisés.", impact: "cycle_very_irregular", confidencePenalty: 30, group: "lifecycle" },
-            { id: "perimenopause", label: "Péri-ménopause", sublabel: "> 40 ans", warning: "Cycles imprévisibles.", impact: "cycle_very_irregular", confidencePenalty: 30, group: "lifecycle" },
-            { id: "meds_antidepressant", label: "Antidépresseurs", sublabel: "ISRS, IRSN", warning: "Peuvent retarder l'ovulation.", impact: "ovulation_delayed", confidencePenalty: 10, group: "meds" },
-            { id: "meds_corticoids", label: "Corticoïdes", sublabel: "Prise orale prolongée", warning: "Peuvent perturber le cycle.", impact: "cycle_irregular", confidencePenalty: 10, group: "meds" },
-            { id: "meds_chemo", label: "Chimiothérapie", sublabel: "En cours ou récente", warning: "Peut induire une aménorrhée.", impact: "blocks_ovulation", confidencePenalty: 50, group: "meds" },
-        ];
+const GROUP_LABELS = {
+  contraception: "💊 Contraception",
+  pathology:     "🏥 Pathologies connues",
+  lifestyle:     "🏃 Mode de vie",
+  lifecycle:     "🤱 Étape de vie",
+  meds:          "💉 Médicaments",
+};
 
-        const GROUP_LABELS = {
-            contraception: "💊 Contraception",
-            pathology: "🏥 Pathologies",
-            lifestyle: "🏃 Mode de vie",
-            lifecycle: "🤱 Étape de vie",
-            meds: "💉 Médicaments",
-        };
+const STATUS_META = {
+  period:     { label:"Menstruation",       bg:"bg-red-100",    text:"text-red-700",    dot:"bg-red-500",    border:"border-red-300" },
+  follicular: { label:"Phase folliculaire",  bg:"bg-blue-100",   text:"text-blue-700",   dot:"bg-blue-500",   border:"border-blue-300" },
+  fertile:    { label:"Fenêtre fertile",     bg:"bg-green-100",  text:"text-green-700",  dot:"bg-green-500",  border:"border-green-300" },
+  ovulation:  { label:"Ovulation probable",  bg:"bg-orange-100", text:"text-orange-700", dot:"bg-orange-500", border:"border-orange-300" },
+  luteal:     { label:"Phase lutéale",       bg:"bg-purple-100", text:"text-purple-700", dot:"bg-purple-500", border:"border-purple-300" },
+};
 
-        function stdDev(arr) {
-            if (arr.length < 2) return null;
-            const mean = arr.reduce((a, b) => a + b, 0) / arr.length;
-            return Math.sqrt(arr.map(x => (x - mean) ** 2).reduce((a, b) => a + b, 0) / arr.length);
-        }
+const PRIORITY_META = {
+  1: { label:"Priorité 1", sublabel:"Cible active",       icon:"🔴", bg:"bg-red-50",    border:"border-red-400",    text:"text-red-700" },
+  2: { label:"Priorité 2", sublabel:"Suivi régulier",     icon:"🟠", bg:"bg-orange-50", border:"border-orange-400", text:"text-orange-700" },
+  3: { label:"Priorité 3", sublabel:"Suivi occasionnel",  icon:"🟡", bg:"bg-yellow-50", border:"border-yellow-400", text:"text-yellow-700" },
+  4: { label:"Niveau 4",   sublabel:"Profil accompli ✅", icon:"✅", bg:"bg-gray-50",   border:"border-gray-300",   text:"text-gray-400" },
+};
 
-        function calcCycleInfo(profile) {
-            const today = new Date(); today.setHours(0, 0, 0, 0);
-            const start = new Date(profile.lastPeriod); start.setHours(0, 0, 0, 0);
-            const daysSince = Math.floor((today - start) / 86400000);
-            const activeFactors = FACTORS.filter(f => (profile.factors || []).includes(f.id));
-            const blocksOvulation = activeFactors.some(f => f.impact === "blocks_ovulation");
-            const allLengths = (profile.cycleHistory || []).map(h => h.length).filter(l => l >= 18 && l <= 60);
-            const avgCycle = allLengths.length >= 2 ? Math.round(allLengths.reduce((a, b) => a + b, 0) / allLengths.length) : (profile.cycleLength || 28);
-            const sd = allLengths.length >= 2 ? stdDev(allLengths) : null;
-            const lutealPhase = profile.lutealPhase || 14;
-            const ovulationDay = avgCycle - lutealPhase;
-            const fertileStart = ovulationDay - 5;
-            const periodDuration = profile.periodDuration || 5;
-            const dayOfCycle = (daysSince % avgCycle) + 1;
-            
-            let statusCode;
-            if (blocksOvulation) statusCode = dayOfCycle <= periodDuration ? "period" : "follicular";
-            else if (dayOfCycle <= periodDuration) statusCode = "period";
-            else if (dayOfCycle < fertileStart) statusCode = "follicular";
-            else if (dayOfCycle >= fertileStart && dayOfCycle < ovulationDay) statusCode = "fertile";
-            else if (dayOfCycle === ovulationDay) statusCode = "ovulation";
-            else statusCode = "luteal";
-            
-            const daysToOvulation = blocksOvulation ? null : (dayOfCycle <= ovulationDay ? ovulationDay - dayOfCycle : (avgCycle - dayOfCycle) + ovulationDay);
-            const daysToNextPeriod = avgCycle - dayOfCycle + 1;
-            
-            let score = 40;
-            if (allLengths.length >= 3) score += 20;
-            if (allLengths.length >= 6) score += 10;
-            if (sd !== null && sd <= 2) score += 15;
-            if (profile.lutealPhase) score += 5;
-            activeFactors.forEach(f => { score -= f.confidencePenalty; });
-            score = Math.max(5, Math.min(90, score));
-            
-            let confidence, confidenceColor;
-            if (score >= 75) { confidence = "Élevée"; confidenceColor = "text-green-600"; }
-            else if (score >= 45) { confidence = "Modérée"; confidenceColor = "text-yellow-600"; }
-            else { confidence = "Faible"; confidenceColor = "text-red-500"; }
-            
-            const windowDays = sd ? Math.ceil(sd) : 2;
-            const warnings = activeFactors.filter(f => f.warning).map(f => f.warning);
-            
-            return { dayOfCycle, avgCycle, ovulationDay, fertileStart, periodDuration, statusCode, daysToOvulation, daysToNextPeriod, confidence, confidenceColor, score, windowDays, sd, blocksOvulation, warnings };
-        }
+const EMPTY_FORM = {
+  firstName:"", lastName:"", dob:"", lastPeriod:"", cycleLength:28, periodDuration:5,
+  lutealPhase:14, priority:1, notes:"", factors:[], cycleHistory:[],
+};
 
-        function age(dob) {
-            if (!dob) return "—";
-            const today = new Date(), b = new Date(dob);
-            let a = today.getFullYear() - b.getFullYear();
-            if (today.getMonth() < b.getMonth() || (today.getMonth() === b.getMonth() && today.getDate() < b.getDate())) a--;
-            return a;
-        }
+const LS_KEY = "cyclora_profiles";
 
-        function fmtDate(str) {
-            if (!str || str === "inconnu") return "—";
-            return new Date(str).toLocaleDateString("fr-FR", { day: "numeric", month: "short", year: "numeric" });
-        }
+// ─── HELPERS ─────────────────────────────────────────────────────────────────
+function stdDev(arr) {
+  if (arr.length < 2) return null;
+  const mean = arr.reduce((a, b) => a + b, 0) / arr.length;
+  return Math.sqrt(arr.map(x => (x - mean) ** 2).reduce((a, b) => a + b, 0) / arr.length);
+}
 
-        const STATUS_META = {
-            period: { label: "Menstruation", bg: "bg-red-100", text: "text-red-700", dot: "bg-red-500", border: "border-red-300" },
-            follicular: { label: "Phase folliculaire", bg: "bg-blue-100", text: "text-blue-700", dot: "bg-blue-500", border: "border-blue-300" },
-            fertile: { label: "Fenêtre fertile", bg: "bg-green-100", text: "text-green-700", dot: "bg-green-500", border: "border-green-300" },
-            ovulation: { label: "Ovulation", bg: "bg-orange-100", text: "text-orange-700", dot: "bg-orange-500", border: "border-orange-300" },
-            luteal: { label: "Phase lutéale", bg: "bg-purple-100", text: "text-purple-700", dot: "bg-purple-500", border: "border-purple-300" },
-        };
+function calcCycleInfo(profile) {
+  const today = new Date(); today.setHours(0,0,0,0);
+  const start = new Date(profile.lastPeriod); start.setHours(0,0,0,0);
+  const daysSince = Math.floor((today - start) / 86400000);
 
-        const PRIORITY_META = {
-            1: { label: "Priorité 1", sublabel: "Cible active", icon: "🔴", bg: "bg-red-50", border: "border-red-400", text: "text-red-700" },
-            2: { label: "Priorité 2", sublabel: "Suivi régulier", icon: "🟠", bg: "bg-orange-50", border: "border-orange-400", text: "text-orange-700" },
-            3: { label: "Priorité 3", sublabel: "Suivi occasionnel", icon: "🟡", bg: "bg-yellow-50", border: "border-yellow-400", text: "text-yellow-700" },
-            4: { label: "Priorité 4", sublabel: "Profil accompli ✅", icon: "✅", bg: "bg-gray-50", border: "border-gray-300", text: "text-gray-400" },
-        };
+  const activeFactors = FACTORS.filter(f => (profile.factors || []).includes(f.id));
+  const blocksOvulation = activeFactors.some(f => f.impact === "blocks_ovulation");
 
-        const EMPTY_FORM = { firstName: "", lastName: "", dob: "", lastPeriod: "", cycleLength: 28, periodDuration: 5, lutealPhase: 14, priority: 1, notes: "", factors: [], cycleHistory: [] };
+  const allLengths = (profile.cycleHistory || []).map(h => h.length).filter(l => l >= 18 && l <= 60);
+  const avgCycle = allLengths.length >= 2
+    ? Math.round(allLengths.reduce((a,b) => a+b, 0) / allLengths.length)
+    : (profile.cycleLength || 28);
+  const sd = allLengths.length >= 2 ? stdDev(allLengths) : null;
 
-        // Composant CycleRing
-        function CycleRing({ info }) {
-            const { dayOfCycle, avgCycle, statusCode } = info;
-            const R = 36, CX = 44, CY = 44, sw = 7, circ = 2 * Math.PI * R;
-            const prog = (dayOfCycle / avgCycle) * circ;
-            const col = { period: "#ef4444", follicular: "#3b82f6", fertile: "#22c55e", ovulation: "#f97316", luteal: "#a855f7" }[statusCode];
-            return (
-                <div className="relative flex items-center justify-center flex-shrink-0" style={{ width: 88, height: 88 }}>
-                    <svg width="88" height="88" style={{ transform: "rotate(-90deg)" }}>
-                        <circle cx={CX} cy={CY} r={R} fill="none" stroke="#f3f4f6" strokeWidth={sw} />
-                        <circle cx={CX} cy={CY} r={R} fill="none" stroke={col} strokeWidth={sw} strokeDasharray={`${prog} ${circ}`} strokeLinecap="round" />
-                    </svg>
-                    <div className="absolute text-center">
-                        <div className="text-lg font-black text-gray-900 leading-none">{dayOfCycle}</div>
-                        <div className="text-[10px] text-gray-400">/{avgCycle}j</div>
+  const lutealPhase = profile.lutealPhase || 14;
+  const ovulationDay = avgCycle - lutealPhase;
+  const fertileStart = ovulationDay - 5;
+  const periodDuration = profile.periodDuration || 5;
+  const dayOfCycle = (daysSince % avgCycle) + 1;
+
+  let statusCode;
+  if (blocksOvulation) {
+    statusCode = dayOfCycle <= periodDuration ? "period" : "follicular";
+  } else {
+    if (dayOfCycle <= periodDuration) statusCode = "period";
+    else if (dayOfCycle < fertileStart) statusCode = "follicular";
+    else if (dayOfCycle >= fertileStart && dayOfCycle < ovulationDay) statusCode = "fertile";
+    else if (dayOfCycle === ovulationDay) statusCode = "ovulation";
+    else statusCode = "luteal";
+  }
+
+  const daysToOvulation = blocksOvulation ? null :
+    (dayOfCycle <= ovulationDay ? ovulationDay - dayOfCycle : (avgCycle - dayOfCycle) + ovulationDay);
+  const daysToNextPeriod = avgCycle - dayOfCycle + 1;
+
+  let score = 40;
+  if (allLengths.length >= 3) score += 20;
+  if (allLengths.length >= 6) score += 10;
+  if (sd !== null && sd <= 2) score += 15;
+  if (profile.lutealPhase) score += 5;
+  activeFactors.forEach(f => { score -= f.confidencePenalty; });
+  score = Math.max(5, Math.min(90, score));
+
+  let confidence, confidenceColor;
+  if (score >= 75) { confidence = "Élevée"; confidenceColor = "text-green-600"; }
+  else if (score >= 45) { confidence = "Modérée"; confidenceColor = "text-yellow-600"; }
+  else { confidence = "Faible"; confidenceColor = "text-red-500"; }
+
+  const windowDays = sd ? Math.ceil(sd) : 2;
+  const warnings = activeFactors.filter(f => f.warning).map(f => f.warning);
+
+  return {
+    dayOfCycle, avgCycle, ovulationDay, fertileStart, periodDuration,
+    statusCode, daysToOvulation, daysToNextPeriod,
+    confidence, confidenceColor, score, windowDays, sd,
+    blocksOvulation, warnings,
+  };
+}
+
+function getAge(dob) {
+  if (!dob) return "—";
+  const today = new Date(), b = new Date(dob);
+  let a = today.getFullYear() - b.getFullYear();
+  if (today.getMonth() < b.getMonth() || (today.getMonth() === b.getMonth() && today.getDate() < b.getDate())) a--;
+  return a;
+}
+
+function fmtDate(str) {
+  if (!str) return "—";
+  return new Date(str).toLocaleDateString("fr-FR", { day:"numeric", month:"short", year:"numeric" });
+}
+
+function loadProfiles() {
+  try {
+    const raw = localStorage.getItem(LS_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch(e) { return []; }
+}
+
+function saveProfiles(profiles) {
+  try { localStorage.setItem(LS_KEY, JSON.stringify(profiles)); } catch(e) {}
+}
+
+// ─── CYCLE RING ──────────────────────────────────────────────────────────────
+function CycleRing({ info }) {
+  const { dayOfCycle, avgCycle, statusCode } = info;
+  const R = 36, CX = 44, CY = 44, sw = 7;
+  const circ = 2 * Math.PI * R;
+  const prog = (dayOfCycle / avgCycle) * circ;
+  const col = { period:"#ef4444", follicular:"#3b82f6", fertile:"#22c55e", ovulation:"#f97316", luteal:"#a855f7" }[statusCode];
+  return (
+    <div style={{ position:"relative", display:"flex", alignItems:"center", justifyContent:"center", width:88, height:88, flexShrink:0 }}>
+      <svg width="88" height="88" style={{ transform:"rotate(-90deg)" }}>
+        <circle cx={CX} cy={CY} r={R} fill="none" stroke="#f3f4f6" strokeWidth={sw} />
+        <circle cx={CX} cy={CY} r={R} fill="none" stroke={col} strokeWidth={sw}
+          strokeDasharray={`${prog} ${circ}`} strokeLinecap="round" />
+      </svg>
+      <div style={{ position:"absolute", textAlign:"center", pointerEvents:"none" }}>
+        <div className="text-lg font-black text-gray-900" style={{ lineHeight:1 }}>{dayOfCycle}</div>
+        <div className="text-gray-400" style={{ fontSize:10 }}>/{avgCycle}j</div>
+      </div>
+    </div>
+  );
+}
+
+// ─── PROFILE CARD ────────────────────────────────────────────────────────────
+function ProfileCard({ profile, onClick }) {
+  const info = calcCycleInfo(profile);
+  const sm = STATUS_META[info.statusCode];
+  const pm = PRIORITY_META[profile.priority || 1];
+  const accomplished = profile.priority === 4;
+  const hasWarnings = info.warnings.length > 0;
+
+  return (
+    <div
+      onClick={() => onClick(profile)}
+      className={`cursor-pointer rounded-2xl border-2 bg-white shadow-sm hover:shadow-md transition-all p-4 flex gap-3 items-start ${
+        accomplished ? "opacity-55 border-gray-200" : hasWarnings ? "border-orange-300" : sm.border
+      }`}
+    >
+      <CycleRing info={info} />
+      <div style={{ flex:1, minWidth:0 }}>
+        <div className="flex items-start justify-between gap-2 flex-wrap">
+          <div className="flex items-center gap-1" style={{ flexWrap:"wrap" }}>
+            <span title={pm.sublabel}>{pm.icon}</span>
+            <span className="font-bold text-gray-900 text-sm">{profile.firstName} {profile.lastName}</span>
+            {profile.dob && <span className="text-xs text-gray-400">{getAge(profile.dob)} ans</span>}
+          </div>
+          <div className={`inline-flex items-center gap-1 rounded-full font-semibold text-xs px-2 py-0 ${sm.bg} ${sm.text}`} style={{ paddingTop:2, paddingBottom:2 }}>
+            <span className={`w-1 h-1 rounded-full ${sm.dot}`} style={{ width:6, height:6, borderRadius:"50%", display:"inline-block", flexShrink:0 }}></span>
+            {sm.label}
+          </div>
+        </div>
+        {accomplished ? (
+          <div className="mt-2 text-xs text-gray-400" style={{ fontStyle:"italic" }}>Objectif atteint — profil archivé</div>
+        ) : (
+          <>
+            <div className="mt-2 flex flex-wrap gap-1">
+              {info.blocksOvulation ? (
+                <span className="rounded-lg px-2 bg-orange-100 text-orange-700 text-xs font-semibold" style={{ paddingTop:4, paddingBottom:4 }}>⚠️ Ovulation non calculable</span>
+              ) : (
+                <span className={`rounded-lg px-2 text-xs font-semibold ${sm.bg} ${sm.text}`} style={{ paddingTop:4, paddingBottom:4 }}>
+                  Ovulation dans <strong>{info.daysToOvulation}j</strong>
+                  {info.windowDays > 0 && <span style={{ fontWeight:"normal", opacity:0.7 }}> ±{info.windowDays}j</span>}
+                </span>
+              )}
+              <span className="rounded-lg px-2 bg-gray-100 text-gray-600 text-xs font-semibold" style={{ paddingTop:4, paddingBottom:4 }}>
+                Règles dans <strong>{info.daysToNextPeriod}j</strong>
+              </span>
+              <span className={`rounded-lg px-2 bg-gray-50 text-xs font-semibold ${info.confidenceColor}`} style={{ paddingTop:4, paddingBottom:4 }}>
+                ● {info.confidence} ({info.score}%)
+              </span>
+            </div>
+            {hasWarnings && (
+              <div className="mt-1 text-xs text-orange-600">
+                ⚠️ {info.warnings.length} facteur{info.warnings.length > 1 ? "s affectent" : " affecte"} ce cycle
+              </div>
+            )}
+          </>
+        )}
+        {profile.notes && <div className="mt-1 text-xs text-gray-400" style={{ overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{profile.notes}</div>}
+      </div>
+    </div>
+  );
+}
+
+// ─── NOTIFICATIONS ───────────────────────────────────────────────────────────
+function Notifications({ profiles }) {
+  const active = profiles.filter(p => p.priority !== 4);
+  const fertile = active.filter(p => { const i = calcCycleInfo(p); return !i.blocksOvulation && ["fertile","ovulation"].includes(i.statusCode); });
+  const ovNow = active.filter(p => { const i = calcCycleInfo(p); return !i.blocksOvulation && i.statusCode === "ovulation"; });
+  const periodSoon = active.filter(p => calcCycleInfo(p).daysToNextPeriod <= 5);
+  const items = [
+    ovNow.length > 0 && { icon:"🟠", text:`Ovulation probable aujourd'hui : ${ovNow.map(p => p.firstName).join(", ")}` },
+    fertile.length > 0 && { icon:"🟢", text:`Fenêtre fertile : ${fertile.map(p => p.firstName).join(", ")}` },
+    periodSoon.length > 0 && { icon:"🔴", text:`Règles imminentes (≤5j) : ${periodSoon.map(p => p.firstName).join(", ")}` },
+  ].filter(Boolean);
+  if (!items.length) return null;
+  return (
+    <div className="space-y-2 mb-5">
+      {items.map((a, i) => (
+        <div key={i} className="flex items-center gap-2 bg-white border border-gray-200 rounded-xl px-4 text-xs text-gray-700" style={{ paddingTop:10, paddingBottom:10 }}>
+          <span>{a.icon}</span>{a.text}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ─── SUMMARY ─────────────────────────────────────────────────────────────────
+function Summary({ profiles }) {
+  const items = profiles.filter(p => p.priority !== 4).map(p => {
+    const info = calcCycleInfo(p);
+    if (info.blocksOvulation) return { name:p.firstName, msg:"ovulation non calculable (facteur actif)", emoji:"⚠️", pri:99 };
+    if (info.statusCode === "ovulation") return { name:p.firstName, msg:"ovulation probable aujourd'hui", emoji:"🟠", pri:0 };
+    if (info.statusCode === "fertile") return { name:p.firstName, msg:`fenêtre fertile — ovulation dans ${info.daysToOvulation}j`, emoji:"🟢", pri:1 };
+    if (info.daysToOvulation <= 3) return { name:p.firstName, msg:`ovulation estimée dans ${info.daysToOvulation}j`, emoji:"🕐", pri:2 };
+    if (info.daysToNextPeriod <= 5) return { name:p.firstName, msg:`règles dans ${info.daysToNextPeriod}j`, emoji:"🔴", pri:3 };
+    return null;
+  }).filter(Boolean).sort((a, b) => a.pri - b.pri);
+  if (!items.length) return null;
+  return (
+    <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 mb-5">
+      <div className="text-xs font-bold text-amber-700 mb-2">📋 Résumé du jour</div>
+      <ul style={{ listStyle:"none", margin:0, padding:0 }}>
+        {items.map((it, i) => (
+          <li key={i} className="text-xs text-gray-700" style={{ marginBottom:2 }}>
+            {it.emoji} <strong>{it.name}</strong> — {it.msg}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+// ─── CALENDAR ────────────────────────────────────────────────────────────────
+function CalendarView({ profiles }) {
+  const today = new Date();
+  const [ym, setYm] = useState({ y: today.getFullYear(), m: today.getMonth() });
+  const firstDay = new Date(ym.y, ym.m, 1).getDay();
+  const dim = new Date(ym.y, ym.m + 1, 0).getDate();
+  const pad = firstDay === 0 ? 6 : firstDay - 1;
+  const days = [...Array(pad).fill(null), ...Array.from({ length:dim }, (_, i) => i + 1)];
+
+  function eventsFor(day) {
+    const date = new Date(ym.y, ym.m, day); date.setHours(0,0,0,0);
+    const ev = [];
+    profiles.filter(p => p.priority !== 4).forEach(p => {
+      const start = new Date(p.lastPeriod); start.setHours(0,0,0,0);
+      const diff = Math.floor((date - start) / 86400000);
+      const info = calcCycleInfo(p);
+      if (info.blocksOvulation) return;
+      const cd = ((diff % info.avgCycle) + info.avgCycle) % info.avgCycle + 1;
+      if (cd === info.ovulationDay) ev.push({ n:p.firstName[0], t:"ov" });
+      else if (cd >= info.fertileStart && cd < info.ovulationDay) ev.push({ n:p.firstName[0], t:"ft" });
+      else if (cd <= info.periodDuration) ev.push({ n:p.firstName[0], t:"pr" });
+    });
+    return ev;
+  }
+
+  const monthName = new Date(ym.y, ym.m).toLocaleDateString("fr-FR", { month:"long", year:"numeric" });
+  return (
+    <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-4 mb-5">
+      <div className="flex items-center justify-between mb-4">
+        <button onClick={() => setYm(({ y, m }) => m === 0 ? { y:y-1, m:11 } : { y, m:m-1 })}
+          className="text-gray-400 hover:text-gray-700 px-2 py-1 rounded-lg hover:bg-gray-100">‹</button>
+        <span className="font-bold text-gray-800 text-sm" style={{ textTransform:"capitalize" }}>{monthName}</span>
+        <button onClick={() => setYm(({ y, m }) => m === 11 ? { y:y+1, m:0 } : { y, m:m+1 })}
+          className="text-gray-400 hover:text-gray-700 px-2 py-1 rounded-lg hover:bg-gray-100">›</button>
+      </div>
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(7,1fr)", gap:4, textAlign:"center" }}>
+        {["Lu","Ma","Me","Je","Ve","Sa","Di"].map(d => (
+          <div key={d} className="text-xs font-semibold text-gray-400" style={{ paddingTop:4, paddingBottom:4 }}>{d}</div>
+        ))}
+        {days.map((day, i) => {
+          const isToday = day === today.getDate() && ym.m === today.getMonth() && ym.y === today.getFullYear();
+          const ev = day ? eventsFor(day) : [];
+          return (
+            <div key={i} className={`rounded-xl ${isToday ? "bg-gray-900" : ""}`}
+              style={{ paddingTop:4, paddingBottom:4, minHeight:40, display:"flex", flexDirection:"column", alignItems:"center" }}>
+              {day && <>
+                <span className={`text-xs font-bold ${isToday ? "text-white" : "text-gray-600"}`}>{day}</span>
+                <div style={{ display:"flex", flexWrap:"wrap", gap:2, justifyContent:"center", marginTop:2 }}>
+                  {ev.slice(0, 3).map((e, j) => (
+                    <span key={j} style={{
+                      width:8, height:8, borderRadius:"50%", display:"inline-block",
+                      background: e.t==="ov" ? "#fb923c" : e.t==="ft" ? "#4ade80" : "#f87171"
+                    }} />
+                  ))}
+                </div>
+              </>}
+            </div>
+          );
+        })}
+      </div>
+      <div style={{ display:"flex", gap:12, marginTop:12, flexWrap:"wrap" }}>
+        {[["#fb923c","Ovulation"],["#4ade80","Fertile"],["#f87171","Règles"]].map(([c,l]) => (
+          <div key={l} style={{ display:"flex", alignItems:"center", gap:4 }} className="text-xs text-gray-500">
+            <span style={{ width:10, height:10, borderRadius:"50%", background:c, display:"inline-block" }} />{l}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ─── PROFILE FORM ────────────────────────────────────────────────────────────
+function ProfileForm({ initial, onSave, onCancel, onDelete }) {
+  const initData = initial || EMPTY_FORM;
+  const [form, setForm] = useState({ ...EMPTY_FORM, ...initData });
+  const [tab, setTab] = useState("basic");
+  const [histInput, setHistInput] = useState({ date:"", length:"" });
+
+  const set = (k, v) => setForm(f => ({ ...f, [k]:v }));
+
+  const toggleFactor = (id) => setForm(f => {
+    const cur = f.factors || [];
+    const fDef = FACTORS.find(x => x.id === id);
+    let next = cur.includes(id)
+      ? cur.filter(x => x !== id)
+      : [...cur.filter(x => {
+          if (fDef.group === "contraception") {
+            const gf = FACTORS.find(y => y.id === x);
+            return gf ? gf.group !== "contraception" : true;
+          }
+          return true;
+        }), id];
+    return { ...f, factors:next };
+  });
+
+  const addHistory = () => {
+    const len = Number(histInput.length);
+    if (!histInput.length || isNaN(len) || len < 18 || len > 60) return;
+    setForm(f => ({ ...f, cycleHistory:[...(f.cycleHistory||[]), { date:histInput.date||"inconnu", length:len }] }));
+    setHistInput({ date:"", length:"" });
+  };
+
+  const removeHistory = (i) => setForm(f => ({ ...f, cycleHistory:f.cycleHistory.filter((_, j) => j !== i) }));
+
+  const valid = form.firstName.trim() && form.lastPeriod;
+
+  const previewInfo = useMemo(() => calcCycleInfo({
+    ...form, lastPeriod: form.lastPeriod || new Date().toISOString().slice(0,10)
+  }), [form]);
+
+  const groupedFactors = Object.entries(GROUP_LABELS).map(([g, gl]) => ({
+    group: g, label: gl, items: FACTORS.filter(f => f.group === g)
+  }));
+
+  const histLengths = (form.cycleHistory||[]).map(h => h.length);
+  const histAvg = histLengths.length >= 2 ? Math.round(histLengths.reduce((a,b)=>a+b,0)/histLengths.length) : null;
+  const histSd = histLengths.length >= 2 ? stdDev(histLengths) : null;
+
+  const inputCls = "w-full border border-gray-200 rounded-xl px-3 py-2 text-sm bg-white";
+  const labelCls = "text-xs font-semibold text-gray-500 block mb-1";
+
+  return (
+    <div
+      style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.6)", display:"flex", alignItems:"flex-end", justifyContent:"center", zIndex:50, padding:0 }}
+      onClick={onCancel}
+    >
+      <div
+        style={{ background:"#fff", borderRadius:"24px 24px 0 0", width:"100%", maxWidth:520, maxHeight:"93vh", display:"flex", flexDirection:"column" }}
+        onClick={e => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between px-5 border-b border-gray-100" style={{ paddingTop:20, paddingBottom:12 }}>
+          <div>
+            <div className="font-black text-gray-900 text-base">{initData.id ? "Modifier le profil" : "Nouveau profil"}</div>
+            <div className="text-xs text-gray-400" style={{ marginTop:2 }}>Plus vous remplissez, plus la prédiction est précise</div>
+          </div>
+          <button onClick={onCancel} style={{ fontSize:24, color:"#d1d5db", lineHeight:1, background:"none", border:"none", cursor:"pointer" }}>×</button>
+        </div>
+
+        {/* Tabs */}
+        <div className="flex border-b border-gray-100 px-5">
+          {[["basic","👤 Identité"],["cycle","📅 Cycle"],["factors","⚠️ Facteurs"]].map(([t, l]) => (
+            <button key={t} onClick={() => setTab(t)} style={{
+              fontSize:12, fontWeight:600, paddingTop:10, paddingBottom:10, paddingLeft:8, paddingRight:8, marginRight:12,
+              borderBottom: tab===t ? "2px solid #111" : "2px solid transparent",
+              color: tab===t ? "#111" : "#9ca3af", background:"none", border:"none", borderBottomWidth:2,
+              borderBottomStyle:"solid", borderBottomColor: tab===t ? "#111" : "transparent",
+              cursor:"pointer", whiteSpace:"nowrap"
+            }}>
+              {l}
+              {t==="factors" && (form.factors||[]).length > 0 && (
+                <span style={{ marginLeft:4, background:"#fed7aa", color:"#c2410c", borderRadius:99, padding:"0 5px", fontSize:10, fontWeight:700 }}>
+                  {(form.factors||[]).length}
+                </span>
+              )}
+            </button>
+          ))}
+        </div>
+
+        {/* Body */}
+        <div style={{ overflowY:"auto", flex:1, padding:"16px 20px" }}>
+
+          {/* ── Identité ── */}
+          {tab==="basic" && (
+            <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
+              <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
+                <label><span className={labelCls}>Prénom *</span>
+                  <input className={inputCls} placeholder="Sophie" value={form.firstName} onChange={e => set("firstName", e.target.value)} style={{ outline:"none" }} />
+                </label>
+                <label><span className={labelCls}>Nom</span>
+                  <input className={inputCls} placeholder="Martin" value={form.lastName} onChange={e => set("lastName", e.target.value)} style={{ outline:"none" }} />
+                </label>
+              </div>
+              <label><span className={labelCls}>Date de naissance</span>
+                <input type="date" className={inputCls} value={form.dob} onChange={e => set("dob", e.target.value)} style={{ outline:"none" }} />
+              </label>
+              <div>
+                <span className={labelCls}>Niveau de priorité</span>
+                <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8 }}>
+                  {[1,2,3,4].map(p => {
+                    const m = PRIORITY_META[p];
+                    return (
+                      <button key={p} onClick={() => set("priority", p)} style={{
+                        textAlign:"left", borderRadius:12,
+                        border: form.priority===p ? `2px solid ${["#f87171","#fb923c","#fde047","#d1d5db"][p-1]}` : "2px solid #f3f4f6",
+                        padding:"10px 12px", background: form.priority===p ? [null,"#fef2f2","#fff7ed","#fefce8","#f9fafb"][p] : "#fff",
+                        cursor:"pointer", transition:"all 0.15s"
+                      }}>
+                        <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+                          <span style={{ fontSize:16 }}>{m.icon}</span>
+                          <div>
+                            <div style={{ fontSize:12, fontWeight:700, color: form.priority===p ? ["#b91c1c","#c2410c","#a16207","#6b7280"][p-1] : "#374151" }}>{m.label}</div>
+                            <div style={{ fontSize:11, color:"#9ca3af" }}>{m.sublabel}</div>
+                          </div>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+              <label><span className={labelCls}>Notes personnelles</span>
+                <textarea className={inputCls} rows={3} placeholder="Contexte, objectifs, remarques…" value={form.notes}
+                  onChange={e => set("notes", e.target.value)} style={{ outline:"none", resize:"none" }} />
+              </label>
+            </div>
+          )}
+
+          {/* ── Cycle ── */}
+          {tab==="cycle" && (
+            <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
+              <label><span className={labelCls}>Date des dernières règles *</span>
+                <input type="date" className={inputCls} value={form.lastPeriod} onChange={e => set("lastPeriod", e.target.value)} style={{ outline:"none" }} />
+              </label>
+              <div>
+                <span className={labelCls}>Durée habituelle du cycle : <strong>{form.cycleLength} jours</strong></span>
+                <input type="range" min={18} max={60} value={form.cycleLength} onChange={e => set("cycleLength", Number(e.target.value))}
+                  style={{ width:"100%", accentColor:"#111" }} />
+                <div style={{ display:"flex", justifyContent:"space-between", fontSize:11, color:"#9ca3af" }}><span>18j</span><span>60j</span></div>
+              </div>
+              <div>
+                <span className={labelCls}>Durée habituelle des règles : <strong>{form.periodDuration} jours</strong></span>
+                <input type="range" min={1} max={10} value={form.periodDuration} onChange={e => set("periodDuration", Number(e.target.value))}
+                  style={{ width:"100%", accentColor:"#111" }} />
+                <div style={{ display:"flex", justifyContent:"space-between", fontSize:11, color:"#9ca3af" }}><span>1j</span><span>10j</span></div>
+              </div>
+              <div>
+                <span className={labelCls}>
+                  Phase lutéale : <strong>{form.lutealPhase} jours</strong>
+                  <span style={{ fontWeight:"normal", color:"#9ca3af", marginLeft:4 }}>(généralement 12–16j, relativement stable)</span>
+                </span>
+                <input type="range" min={10} max={18} value={form.lutealPhase} onChange={e => set("lutealPhase", Number(e.target.value))}
+                  style={{ width:"100%", accentColor:"#111" }} />
+              </div>
+              <div>
+                <span className={labelCls}>
+                  Historique des cycles
+                  <span style={{ fontWeight:"normal", color:"#9ca3af", marginLeft:4 }}>— améliore significativement la précision</span>
+                </span>
+                <div style={{ display:"flex", gap:8 }}>
+                  <input type="date" className={inputCls} value={histInput.date} onChange={e => setHistInput(h => ({ ...h, date:e.target.value }))}
+                    style={{ flex:1, outline:"none" }} />
+                  <input type="number" className={inputCls} placeholder="Jours" min={18} max={60} value={histInput.length}
+                    onChange={e => setHistInput(h => ({ ...h, length:e.target.value }))} style={{ width:72, outline:"none" }} />
+                  <button onClick={addHistory} style={{
+                    padding:"0 12px", background:"#111", color:"#fff", borderRadius:12, fontSize:14, fontWeight:700, border:"none", cursor:"pointer"
+                  }}>+</button>
+                </div>
+                {(form.cycleHistory||[]).length > 0 && (
+                  <div style={{ marginTop:8, maxHeight:112, overflowY:"auto" }}>
+                    {form.cycleHistory.map((h, i) => (
+                      <div key={i} style={{ display:"flex", alignItems:"center", justifyContent:"space-between", background:"#f9fafb", borderRadius:8, padding:"6px 12px", marginBottom:4, fontSize:12 }}>
+                        <span style={{ color:"#9ca3af" }}>{fmtDate(h.date)}</span>
+                        <span style={{ fontWeight:700, color:"#111" }}>{h.length}j</span>
+                        <button onClick={() => removeHistory(i)} style={{ color:"#d1d5db", fontWeight:700, background:"none", border:"none", cursor:"pointer", fontSize:14 }}>×</button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {histAvg && (
+                  <div style={{ fontSize:12, color:"#16a34a", fontWeight:600, marginTop:4 }}>
+                    ✓ Moyenne : {histAvg}j{histSd ? ` ± ${histSd.toFixed(1)}j` : ""} sur {histLengths.length} cycles
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* ── Facteurs ── */}
+          {tab==="factors" && (
+            <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
+              <div style={{ fontSize:12, color:"#1d4ed8", background:"#eff6ff", borderRadius:12, padding:"10px 12px" }}>
+                Ces facteurs ont un impact documenté sur le cycle. Cochez uniquement ce qui s'applique réellement.
+              </div>
+              {groupedFactors.map(({ group, label, items }) => (
+                <div key={group}>
+                  <div style={{ fontSize:11, fontWeight:700, color:"#9ca3af", marginBottom:8, marginTop:4 }}>{label}</div>
+                  <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+                    {items.map(f => {
+                      const active = (form.factors||[]).includes(f.id);
+                      return (
+                        <div key={f.id} onClick={() => toggleFactor(f.id)} style={{
+                          cursor:"pointer", borderRadius:12, padding:"10px 12px",
+                          border: active ? "2px solid #f97316" : "2px solid #f3f4f6",
+                          background: active ? "#fff7ed" : "#fff", transition:"all 0.15s"
+                        }}>
+                          <div style={{ display:"flex", alignItems:"flex-start", justifyContent:"space-between", gap:8 }}>
+                            <div style={{ flex:1 }}>
+                              <div style={{ fontSize:13, fontWeight:600, color: active ? "#9a3412" : "#1f2937" }}>{f.label}</div>
+                              <div style={{ fontSize:11, color:"#9ca3af", marginTop:2 }}>{f.sublabel}</div>
+                              {active && f.warning && (
+                                <div style={{ fontSize:11, color:"#ea580c", marginTop:4, fontWeight:500 }}>⚠️ {f.warning}</div>
+                              )}
+                            </div>
+                            <div style={{
+                              marginTop:2, width:20, height:20, borderRadius:"50%", flexShrink:0, display:"flex", alignItems:"center", justifyContent:"center",
+                              border: active ? "2px solid #f97316" : "2px solid #d1d5db",
+                              background: active ? "#f97316" : "#fff", color:"#fff", fontSize:11, fontWeight:700
+                            }}>{active ? "✓" : ""}</div>
+                          </div>
+                          {active && (
+                            <div style={{ fontSize:11, color:"#9ca3af", marginTop:6 }}>
+                              Impact sur le score : <span style={{ color:"#ef4444", fontWeight:700 }}>−{f.confidencePenalty} pts</span>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
+              {/* Score preview */}
+              <div style={{ background:"#f9fafb", borderRadius:12, padding:16, marginTop:4 }}>
+                <div style={{ fontSize:11, fontWeight:700, color:"#6b7280", marginBottom:8 }}>Score de confiance actuel</div>
+                <div style={{ display:"flex", alignItems:"flex-end", gap:8, marginBottom:4 }}>
+                  <span style={{ fontSize:28, fontWeight:900, color:"#111" }}>{previewInfo.score}%</span>
+                  <span style={{ fontSize:14, fontWeight:600, marginBottom:2 }} className={previewInfo.confidenceColor}>{previewInfo.confidence}</span>
+                </div>
+                <div style={{ height:8, background:"#e5e7eb", borderRadius:99, overflow:"hidden" }}>
+                  <div style={{
+                    height:"100%", borderRadius:99, transition:"width 0.3s",
+                    width:`${previewInfo.score}%`,
+                    background: previewInfo.score>=75 ? "#22c55e" : previewInfo.score>=45 ? "#facc15" : "#ef4444"
+                  }} />
+                </div>
+                {previewInfo.blocksOvulation && (
+                  <div style={{ fontSize:11, color:"#dc2626", fontWeight:600, marginTop:8 }}>
+                    ⚠️ Un facteur actif supprime ou masque l'ovulation. Les fenêtres fertiles ne sont pas calculées.
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div style={{ padding:"12px 20px 20px", borderTop:"1px solid #f3f4f6", display:"flex", gap:8 }}>
+          <button
+            onClick={() => valid && onSave(form)}
+            disabled={!valid}
+            style={{
+              flex:1, padding:"12px 0", borderRadius:12, fontWeight:700, fontSize:14, border:"none", cursor: valid ? "pointer" : "not-allowed",
+              background: valid ? "#111" : "#f3f4f6", color: valid ? "#fff" : "#9ca3af", transition:"background 0.15s"
+            }}
+          >
+            {initData.id ? "Enregistrer les modifications" : "Créer le profil"}
+          </button>
+          {initData.id && (
+            <button onClick={() => onDelete(initData.id)} style={{
+              padding:"12px 16px", borderRadius:12, fontWeight:700, fontSize:14,
+              border:"2px solid #fecaca", color:"#ef4444", background:"#fff", cursor:"pointer"
+            }}>Supprimer</button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── MAIN APP ────────────────────────────────────────────────────────────────
+function App() {
+  const [profiles, setProfiles] = useState(() => loadProfiles());
+  const [search, setSearch] = useState("");
+  const [sortBy, setSortBy] = useState("priority");
+  const [filterPriority, setFilterPriority] = useState("all");
+  const [tab, setTab] = useState("dashboard");
+  const [editing, setEditing] = useState(null);
+  const [adding, setAdding] = useState(false);
+
+  // Persist to localStorage on every change
+  useEffect(() => { saveProfiles(profiles); }, [profiles]);
+
+  const enriched = useMemo(() => profiles.map(p => ({ ...p, info:calcCycleInfo(p) })), [profiles]);
+
+  const sorted = useMemo(() => {
+    let list = enriched.filter(p => {
+      const name = `${p.firstName} ${p.lastName}`.toLowerCase();
+      return name.includes(search.toLowerCase()) && (filterPriority==="all" || String(p.priority)===filterPriority);
+    });
+    const active = list.filter(p => p.priority !== 4);
+    const done = list.filter(p => p.priority === 4);
+    const fn = {
+      priority: (a, b) => {
+        const po = { 1:0, 2:1, 3:2 };
+        const pa = po[a.priority]!==undefined ? po[a.priority] : 3;
+        const pb = po[b.priority]!==undefined ? po[b.priority] : 3;
+        if (pa !== pb) return pa - pb;
+        const so = { ovulation:0, fertile:1, follicular:2, luteal:3, period:4 };
+        return (so[a.info.statusCode]||5) - (so[b.info.statusCode]||5);
+      },
+      ovulation: (a, b) => (a.info.daysToOvulation||999) - (b.info.daysToOvulation||999),
+      period: (a, b) => a.info.daysToNextPeriod - b.info.daysToNextPeriod,
+      fertility: (a, b) => {
+        const o = { ovulation:0, fertile:1, follicular:2, luteal:3, period:4 };
+        return (o[a.info.statusCode]||5) - (o[b.info.statusCode]||5);
+      },
+    }[sortBy] || (() => 0);
+    return [...active.sort(fn), ...done];
+  }, [enriched, search, sortBy, filterPriority]);
+
+  const handleSave = (form) => {
+    setProfiles(ps => form.id ? ps.map(p => p.id===form.id ? form : p) : [...ps, { ...form, id:Date.now() }]);
+    setEditing(null); setAdding(false);
+  };
+  const handleDelete = (id) => {
+    setProfiles(ps => ps.filter(p => p.id !== id));
+    setEditing(null);
+  };
+
+  const selStyle = "border border-gray-200 rounded-xl px-2 py-2 text-sm bg-white";
+
+  return (
+    <div style={{ minHeight:"100vh", background:"#f9fafb" }}>
+      {/* Header */}
+      <header style={{ background:"#fff", borderBottom:"1px solid #f3f4f6", position:"sticky", top:0, zIndex:40, boxShadow:"0 1px 3px rgba(0,0,0,0.05)" }}>
+        <div style={{ maxWidth:640, margin:"0 auto", padding:"12px 16px", display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+          <div>
+            <div style={{ fontWeight:900, color:"#111", fontSize:20, letterSpacing:"-0.5px" }}>Cyclora</div>
+            <div style={{ fontSize:11, color:"#9ca3af" }}>Suivi précis du cycle menstruel</div>
+          </div>
+          <button onClick={() => setAdding(true)} style={{
+            background:"#111", color:"#fff", fontSize:13, fontWeight:700, padding:"8px 16px", borderRadius:12, border:"none", cursor:"pointer"
+          }}>+ Nouveau profil</button>
+        </div>
+        <div style={{ maxWidth:640, margin:"0 auto", padding:"0 16px 8px", display:"flex", gap:4 }}>
+          {[["dashboard","📋 Tableau de bord"],["calendar","📅 Calendrier"]].map(([v, l]) => (
+            <button key={v} onClick={() => setTab(v)} style={{
+              fontSize:12, fontWeight:600, padding:"6px 12px", borderRadius:8, border:"none", cursor:"pointer", transition:"all 0.15s",
+              background: tab===v ? "#111" : "transparent", color: tab===v ? "#fff" : "#9ca3af"
+            }}>{l}</button>
+          ))}
+        </div>
+      </header>
+
+      <main style={{ maxWidth:640, margin:"0 auto", padding:"20px 16px" }}>
+        {profiles.length === 0 ? (
+          <div style={{ textAlign:"center", paddingTop:80, paddingBottom:80 }}>
+            <div style={{ fontSize:48, marginBottom:16 }}>🌸</div>
+            <div style={{ fontWeight:700, color:"#111", fontSize:18, marginBottom:8 }}>Aucun profil créé</div>
+            <div style={{ fontSize:14, color:"#9ca3af", marginBottom:24, maxWidth:280, margin:"0 auto 24px" }}>
+              Créez votre premier profil. Plus vous renseignez de données, plus les prédictions seront précises.
+            </div>
+            <button onClick={() => setAdding(true)} style={{
+              background:"#111", color:"#fff", fontWeight:700, padding:"12px 24px", borderRadius:12, border:"none", cursor:"pointer"
+            }}>Créer un profil</button>
+          </div>
+        ) : (
+          <>
+            <Notifications profiles={profiles} />
+            {tab==="calendar" ? <CalendarView profiles={profiles} /> : (
+              <>
+                <Summary profiles={profiles} />
+                {/* Legend */}
+                <div style={{ display:"flex", flexWrap:"wrap", gap:6, marginBottom:16 }}>
+                  {Object.entries(STATUS_META).map(([k, m]) => (
+                    <div key={k} style={{ display:"flex", alignItems:"center", gap:4, borderRadius:99, padding:"4px 10px", fontSize:12, fontWeight:600 }}
+                      className={`${m.bg} ${m.text}`}>
+                      <span style={{ width:6, height:6, borderRadius:"50%", display:"inline-block" }} className={m.dot}></span>
+                      {m.label}
                     </div>
+                  ))}
                 </div>
-            );
-        }
-
-        // Composant ProfileCard
-        function ProfileCard({ profile, onClick }) {
-            const info = calcCycleInfo(profile);
-            const sm = STATUS_META[info.statusCode];
-            const pm = PRIORITY_META[profile.priority || 1];
-            const accomplished = profile.priority === 4;
-            const hasWarnings = info.warnings.length > 0;
-            return (
-                <div onClick={() => onClick(profile)} className={`cursor-pointer rounded-2xl border-2 bg-white shadow-sm hover:shadow-md transition-all p-4 flex gap-3 items-start ${accomplished ? "opacity-55 border-gray-200" : hasWarnings ? "border-orange-300" : sm.border}`}>
-                    <CycleRing info={info} />
-                    <div className="flex-1 min-w-0">
-                        <div className="flex items-start justify-between gap-2 flex-wrap">
-                            <div className="flex items-center gap-1.5">
-                                <span>{pm.icon}</span>
-                                <span className="font-bold text-gray-900 text-sm">{profile.firstName} {profile.lastName}</span>
-                                {profile.dob && <span className="text-xs text-gray-400">{age(profile.dob)} ans</span>}
-                            </div>
-                            <div className={`inline-flex items-center gap-1 rounded-full font-semibold text-xs px-2 py-0.5 ${sm.bg} ${sm.text}`}>
-                                <span className={`w-1.5 h-1.5 rounded-full ${sm.dot}`} />{sm.label}
-                            </div>
-                        </div>
-                        {!accomplished && (
-                            <div className="mt-2 flex flex-wrap gap-1.5">
-                                {info.blocksOvulation ? (
-                                    <span className="rounded-lg px-2 py-1 bg-orange-100 text-orange-700 text-xs font-semibold">⚠️ Ovulation non calculable</span>
-                                ) : (
-                                    <span className={`rounded-lg px-2 py-1 text-xs font-semibold ${sm.bg} ${sm.text}`}>
-                                        Ovulation dans <strong>{info.daysToOvulation}j</strong>
-                                        {info.windowDays > 0 && <span className="font-normal opacity-70"> ±{info.windowDays}j</span>}
-                                    </span>
-                                )}
-                                <span className="rounded-lg px-2 py-1 bg-gray-100 text-gray-600 text-xs font-semibold">
-                                    Règles dans <strong>{info.daysToNextPeriod}j</strong>
-                                </span>
-                                <span className={`rounded-lg px-2 py-1 bg-gray-50 text-xs font-semibold ${info.confidenceColor}`}>
-                                    ⬤ {info.confidence} ({info.score}%)
-                                </span>
-                            </div>
-                        )}
-                        {profile.notes && <div className="mt-1 text-xs text-gray-400 truncate">{profile.notes}</div>}
-                    </div>
+                {/* Filters */}
+                <div style={{ display:"flex", gap:8, marginBottom:16, flexWrap:"wrap" }}>
+                  <input
+                    style={{ flex:1, minWidth:128, border:"1px solid #e5e7eb", borderRadius:12, padding:"8px 12px", fontSize:13, background:"#fff", outline:"none" }}
+                    placeholder="🔍 Rechercher…" value={search} onChange={e => setSearch(e.target.value)}
+                  />
+                  <select className={selStyle} value={filterPriority} onChange={e => setFilterPriority(e.target.value)} style={{ outline:"none" }}>
+                    <option value="all">Toutes priorités</option>
+                    <option value="1">🔴 Priorité 1</option>
+                    <option value="2">🟠 Priorité 2</option>
+                    <option value="3">🟡 Priorité 3</option>
+                    <option value="4">✅ Accompli</option>
+                  </select>
+                  <select className={selStyle} value={sortBy} onChange={e => setSortBy(e.target.value)} style={{ outline:"none" }}>
+                    <option value="priority">Tri : pertinence</option>
+                    <option value="ovulation">Tri : ovulation</option>
+                    <option value="period">Tri : règles</option>
+                    <option value="fertility">Tri : fertilité</option>
+                  </select>
                 </div>
-            );
-        }
-
-        // Composant principal App
-        function App() {
-            const [profiles, setProfiles] = useState([]);
-            const [search, setSearch] = useState("");
-            const [filterPriority, setFilterPriority] = useState("all");
-            const [editing, setEditing] = useState(null);
-            const [adding, setAdding] = useState(false);
-
-            useEffect(() => {
-                const saved = localStorage.getItem(STORAGE_KEY);
-                if (saved) {
-                    try {
-                        setProfiles(JSON.parse(saved));
-                    } catch (e) { console.error(e); }
-                } else {
-                    // Démo
-                    setProfiles([{
-                        id: Date.now(),
-                        firstName: "Sophie",
-                        lastName: "Martin",
-                        lastPeriod: new Date().toISOString().slice(0, 10),
-                        cycleLength: 28,
-                        periodDuration: 5,
-                        lutealPhase: 14,
-                        priority: 1,
-                        notes: "",
-                        factors: [],
-                        cycleHistory: []
-                    }]);
-                }
-            }, []);
-
-            useEffect(() => {
-                if (profiles.length > 0) localStorage.setItem(STORAGE_KEY, JSON.stringify(profiles));
-            }, [profiles]);
-
-            const handleSave = (form) => {
-                setProfiles(ps => form.id ? ps.map(p => p.id === form.id ? form : p) : [...ps, { ...form, id: Date.now() }]);
-                setEditing(null);
-                setAdding(false);
-            };
-
-            const handleDelete = (id) => {
-                setProfiles(ps => ps.filter(p => p.id !== id));
-                setEditing(null);
-            };
-
-            const sorted = useMemo(() => {
-                return profiles.filter(p => {
-                    const name = `${p.firstName} ${p.lastName}`.toLowerCase();
-                    return name.includes(search.toLowerCase()) && (filterPriority === "all" || String(p.priority) === filterPriority);
-                });
-            }, [profiles, search, filterPriority]);
-
-            return (
-                <div className="min-h-screen bg-gray-50">
-                    <header className="bg-white border-b sticky top-0 z-40 shadow-sm">
-                        <div className="max-w-2xl mx-auto px-4 py-3 flex items-center justify-between">
-                            <div>
-                                <div className="font-black text-gray-900 text-xl">🌸 Cyclora</div>
-                                <div className="text-xs text-gray-400">Suivi précis du cycle menstruel</div>
-                            </div>
-                            <button onClick={() => setAdding(true)} className="bg-gray-900 text-white text-sm font-bold px-4 py-2 rounded-xl">+ Nouveau profil</button>
-                        </div>
-                    </header>
-
-                    <main className="max-w-2xl mx-auto px-4 py-5">
-                        {profiles.length === 0 ? (
-                            <div className="text-center py-20">
-                                <div className="text-5xl mb-4">🌸</div>
-                                <div className="font-bold text-gray-800 mb-2">Aucun profil créé</div>
-                                <button onClick={() => setAdding(true)} className="bg-gray-900 text-white font-bold px-6 py-3 rounded-xl">Créer un profil</button>
-                            </div>
-                        ) : (
-                            <>
-                                <div className="flex gap-2 mb-4 flex-wrap">
-                                    <input className="flex-1 border border-gray-200 rounded-xl px-3 py-2 text-sm" placeholder="🔍 Rechercher..." value={search} onChange={e => setSearch(e.target.value)} />
-                                    <select className="border border-gray-200 rounded-xl px-2 py-2 text-sm" value={filterPriority} onChange={e => setFilterPriority(e.target.value)}>
-                                        <option value="all">Toutes priorités</option>
-                                        <option value="1">🔴 Priorité 1</option>
-                                        <option value="2">🟠 Priorité 2</option>
-                                        <option value="3">🟡 Priorité 3</option>
-                                        <option value="4">✅ Accompli</option>
-                                    </select>
-                                </div>
-                                <div className="space-y-3">
-                                    {sorted.map(p => <ProfileCard key={p.id} profile={p} onClick={setEditing} />)}
-                                </div>
-                            </>
-                        )}
-                    </main>
-
-                    {adding && <ProfileForm onSave={handleSave} onCancel={() => setAdding(false)} />}
-                    {editing && <ProfileForm initial={editing} onSave={handleSave} onCancel={() => setEditing(null)} onDelete={handleDelete} />}
+                {/* Cards */}
+                <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
+                  {sorted.length === 0 && <div style={{ textAlign:"center", paddingTop:40, color:"#9ca3af", fontSize:14 }}>Aucun profil trouvé.</div>}
+                  {sorted.map(p => <ProfileCard key={p.id} profile={p} onClick={setEditing} />)}
                 </div>
-            );
-        }
-
-        // Formulaire ProfileForm (simplifié mais avec toutes les fonctionnalités)
-        function ProfileForm({ initial = EMPTY_FORM, onSave, onCancel, onDelete }) {
-            const [form, setForm] = useState({ ...EMPTY_FORM, ...initial });
-            const [tab, setTab] = useState("basic");
-            
-            const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
-            const toggleFactor = (id) => setForm(f => ({ ...f, factors: f.factors?.includes(id) ? f.factors.filter(x => x !== id) : [...(f.factors || []), id] }));
-            
-            const valid = form.firstName.trim() && form.lastPeriod;
-            const inputCls = "w-full border border-gray-200 rounded-xl px-3 py-2 text-sm";
-            const labelCls = "text-xs font-semibold text-gray-500 block mb-1";
-            const previewInfo = useMemo(() => calcCycleInfo({ ...form, lastPeriod: form.lastPeriod || new Date().toISOString().slice(0, 10) }), [form]);
-            const groupedFactors = Object.entries(GROUP_LABELS).map(([g, gl]) => ({ group: g, label: gl, items: FACTORS.filter(f => f.group === g) }));
-            
-            return (
-                <div className="fixed inset-0 bg-black/60 flex items-end sm:items-center justify-center z-50 p-0 sm:p-4" onClick={onCancel}>
-                    <div className="bg-white rounded-t-3xl sm:rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] flex flex-col" onClick={e => e.stopPropagation()}>
-                        <div className="flex justify-between px-5 pt-5 pb-3 border-b">
-                            <div className="font-black">{initial.id ? "Modifier" : "Nouveau"} profil</div>
-                            <button onClick={onCancel} className="text-gray-400 text-2xl">×</button>
+                {/* Priority legend */}
+                <div style={{ marginTop:24, background:"#fff", borderRadius:16, border:"1px solid #f3f4f6", padding:16 }}>
+                  <div style={{ fontSize:11, fontWeight:700, color:"#9ca3af", marginBottom:12 }}>Niveaux de priorité</div>
+                  <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8 }}>
+                    {[1,2,3,4].map(p => { const m=PRIORITY_META[p]; return (
+                      <div key={p} style={{ display:"flex", alignItems:"center", gap:8 }}>
+                        <span style={{ fontSize:16 }}>{m.icon}</span>
+                        <div>
+                          <div style={{ fontSize:12, fontWeight:600, color:"#374151" }}>{m.label}</div>
+                          <div style={{ fontSize:11, color:"#9ca3af" }}>{m.sublabel}</div>
                         </div>
-                        
-                        <div className="flex border-b px-5">
-                            {[["basic", "👤 Identité"], ["cycle", "📅 Cycle"], ["factors", "⚠️ Facteurs"]].map(([t, l]) => (
-                                <button key={t} onClick={() => setTab(t)} className={`text-xs py-2 px-2 mr-2 ${tab === t ? "border-b-2 border-gray-900 font-bold" : "text-gray-400"}`}>{l}</button>
-                            ))}
-                        </div>
-                        
-                        <div className="overflow-y-auto flex-1 px-5 py-4 space-y-4">
-                            {tab === "basic" && (
-                                <>
-                                    <div className="grid grid-cols-2 gap-3">
-                                        <label><span className={labelCls}>Prénom *</span><input className={inputCls} value={form.firstName} onChange={e => set("firstName", e.target.value)} /></label>
-                                        <label><span className={labelCls}>Nom</span><input className={inputCls} value={form.lastName} onChange={e => set("lastName", e.target.value)} /></label>
-                                    </div>
-                                    <label><span className={labelCls}>Date de naissance</span><input type="date" className={inputCls} value={form.dob} onChange={e => set("dob", e.target.value)} /></label>
-                                    <div>
-                                        <span className={labelCls}>Priorité</span>
-                                        <div className="grid grid-cols-4 gap-2">
-                                            {[1, 2, 3, 4].map(p => (
-                                                <button key={p} onClick={() => set("priority", p)} className={`text-center rounded-xl border-2 px-2 py-2 text-sm ${form.priority === p ? "bg-gray-900 text-white" : "border-gray-200"}`}>
-                                                    {PRIORITY_META[p].icon}
-                                                </button>
-                                            ))}
-                                        </div>
-                                    </div>
-                                    <label><span className={labelCls}>Notes</span><textarea className={inputCls} rows={2} value={form.notes} onChange={e => set("notes", e.target.value)} /></label>
-                                </>
-                            )}
-                            {tab === "cycle" && (
-                                <>
-                                    <label><span className={labelCls}>Dernières règles *</span><input type="date" className={inputCls} value={form.lastPeriod} onChange={e => set("lastPeriod", e.target.value)} /></label>
-                                    <label><span className={labelCls}>Cycle: {form.cycleLength}j</span><input type="range" min={18} max={60} value={form.cycleLength} onChange={e => set("cycleLength", Number(e.target.value))} className="w-full" /></label>
-                                    <label><span className={labelCls}>Règles: {form.periodDuration}j</span><input type="range" min={1} max={10} value={form.periodDuration} onChange={e => set("periodDuration", Number(e.target.value))} className="w-full" /></label>
-                                    <label><span className={labelCls}>Phase lutéale: {form.lutealPhase}j</span><input type="range" min={10} max={18} value={form.lutealPhase} onChange={e => set("lutealPhase", Number(e.target.value))} className="w-full" /></label>
-                                </>
-                            )}
-                            {tab === "factors" && (
-                                <>
-                                    <div className="text-xs text-blue-700 bg-blue-50 rounded-xl p-2">Facteurs influençant le cycle :</div>
-                                    {groupedFactors.map(({ group, label, items }) => (
-                                        <div key={group}>
-                                            <div className="text-xs font-bold text-gray-400 mb-1">{label}</div>
-                                            {items.map(f => {
-                                                const active = (form.factors || []).includes(f.id);
-                                                return (
-                                                    <div key={f.id} onClick={() => toggleFactor(f.id)} className={`cursor-pointer rounded-xl border-2 p-2 mb-1 ${active ? "border-orange-400 bg-orange-50" : "border-gray-100"}`}>
-                                                        <div className="font-semibold text-sm">{f.label}</div>
-                                                        <div className="text-xs text-gray-500">{f.sublabel}</div>
-                                                        {active && f.warning && <div className="text-xs text-orange-600">⚠️ {f.warning}</div>}
-                                                    </div>
-                                                );
-                                            })}
-                                        </div>
-                                    ))}
-                                    <div className="bg-gray-50 rounded-xl p-3 mt-2">
-                                        <div className="text-xs">Confiance: {previewInfo.score}% - {previewInfo.confidence}</div>
-                                        <div className="h-1.5 bg-gray-200 rounded-full mt-1"><div className={`h-full rounded-full ${previewInfo.score >= 75 ? "bg-green-500" : previewInfo.score >= 45 ? "bg-yellow-500" : "bg-red-500"}`} style={{ width: `${previewInfo.score}%` }} /></div>
-                                    </div>
-                                </>
-                            )}
-                        </div>
-                        
-                        <div className="px-5 py-4 border-t flex gap-2">
-                            <button onClick={() => valid && onSave(form)} disabled={!valid} className={`flex-1 py-3 rounded-xl font-bold ${valid ? "bg-gray-900 text-white" : "bg-gray-100 text-gray-400"}`}>
-                                {initial.id ? "Enregistrer" : "Créer"}
-                            </button>
-                            {initial.id && <button onClick={() => onDelete(initial.id)} className="px-4 py-3 border-2 border-red-200 text-red-500 rounded-xl">Supprimer</button>}
-                        </div>
-                    </div>
+                      </div>
+                    );})}
+                  </div>
                 </div>
-            );
-        }
+              </>
+            )}
+          </>
+        )}
+      </main>
 
-        ReactDOM.createRoot(document.getElementById("root")).render(<App />);
-    </script>
+      {adding && <ProfileForm onSave={handleSave} onCancel={() => setAdding(false)} />}
+      {editing && <ProfileForm initial={editing} onSave={handleSave} onCancel={() => setEditing(null)} onDelete={handleDelete} />}
+    </div>
+  );
+}
+
+// ─── Mount ───────────────────────────────────────────────────────────────────
+const root = ReactDOM.createRoot(document.getElementById("root"));
+root.render(<App />);
+</script>
 </body>
 </html>
